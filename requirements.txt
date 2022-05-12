@@ -1,0 +1,7 @@
+Flask
+hiccupy==1.0.0
+lark
+SQLAlchemy
+xlsx2csv
+git+https://github.com/ontodev/sprocket.git@standalone-table
+git+https://github.com/ontodev/gadget.git
