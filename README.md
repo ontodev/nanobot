@@ -10,8 +10,10 @@ $ source .venv/bin/activate
 
 Next, set up the requirements for `nanobot`:
 1. Install the requirements file: `python3 -m pip install -r requirements.txt`
-2. Install `wiring.py` following the directions [here](https://github.com/ontodev/wiring.py)
-3. Install `cmi_pb_script`:
+2. Install spocket: `python3 -m pip install git+https://github.com/ontodev/sprocket.git@standalone-table`
+3. Install gadget: `python3 -m pip install git+https://github.com/ontodev/gadget.git`
+4. Install `wiring.py` following the directions [here](https://github.com/ontodev/wiring.py)
+5. Install `cmi_pb_script`:
 	- Clone the [cmi-pb-terminology](https://github.com/jamesaoverton/cmi-pb-terminology/) repo: `git clone https://github.com/jamesaoverton/cmi-pb-terminology.git`
 	- Navigate to that directory: `cd cmi-pb-terminology`
 	- Checkout the development branch: `git checkout next-2`

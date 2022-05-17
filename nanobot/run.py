@@ -17,7 +17,7 @@ from flask import (
     Response,
     url_for,
 )
-from gadget.export import terms2dict, terms2tsv
+from gadget.export import dicts2tsv, terms2dicts
 from gadget.tree import tree as gadget_tree
 from gadget.search import search
 from hiccupy import insert_href, render
@@ -360,7 +360,7 @@ def term(table_name, term_id):
         term_index = get_term_index()
         if term_index and term_index in get_sql_tables(CONN):
             # Check that 'table' is in the columns, otherwise we don't know which template
-            index_cols = get_sql_columns(CONN, OPTIONS["term_index"])
+            index_cols = get_sql_columns(CONN, get_term_index())
             if "table" in index_cols:
                 # Try to find a template for this term & redirect to the form for that
                 res = CONN.execute(
@@ -386,13 +386,14 @@ def term(table_name, term_id):
         return dump_search_results(table_name)
     else:
         select = request.args.get("select")
-        predicates = None
         if select:
             # TODO: add form at top of page for user to select predicates to show?
             pred_labels = select.split(",")
             predicates = gs.get_ids(
                 CONN, id_or_labels=pred_labels, id_type="predicate", statement=table_name
             )
+        else:
+            predicates = gs.get_ids(CONN, id_type="predicate", statement=table_name)
 
         data = gs.get_objects(CONN, predicates, include_all_predicates=False, statement=table_name, term_ids=[term_id])
         lbls = data[term_id].get("rdfs:label")
@@ -1192,14 +1193,15 @@ def render_ontology_table(table_name, data, predicates: list = None):
     fmt = request.args.get("format")
     if not fmt:
         # Convert objects to hiccup with ofn
-        rendered = terms2dict(
-            CONN, data_subset, hiccup=True, include_annotations=True, statement=table_name
-        )
-        for term_id, predicate_objects in rendered.items():
+        rendered = terms2dicts(CONN, data_subset, include_annotations=True, include_id=True, rdfa=True, statement=table_name)
+        for itm in rendered:
             # Render using hiccup module
             rendered_term = {}
-            for predicate_id, hiccup in predicate_objects.items():
+            term_id = itm["ID"]
+            for predicate_id, hiccup in itm.items():
                 if hiccup:
+                    if predicate_id == "ID":
+                        hiccup = ["a", {"resource": hiccup}, hiccup]
                     hiccup = insert_href(
                         hiccup,
                         href=unquote(
@@ -1213,7 +1215,7 @@ def render_ontology_table(table_name, data, predicates: list = None):
         data.update(post_subset)
 
         if not predicates:
-            predicates = set(chain.from_iterable([list(x.keys()) for x in rendered.values()]))
+            predicates = set(chain.from_iterable([list(x.keys()) for x in rendered]))
         predicate_labels = gs.get_labels(CONN, list(predicates), statement=table_name)
 
         # Create the HTML output of data
@@ -1235,12 +1237,14 @@ def render_ontology_table(table_name, data, predicates: list = None):
             table_data.append(term_data)
         if len(data) == 1:
             # Single term view
+            predicates = table_data[0].keys()
             base_url = url_for("cmi-pb.term", table_name=table_name, term_id=list(data.keys())[0])
         else:
             base_url = url_for("cmi-pb.table", table_name=table_name)
         try:
             predicates = list(predicates)
-            predicates.insert(0, "ID")
+            if "ID" not in predicates:
+                predicates.insert(0, "ID")
             return render_html_table(
                 table_data,
                 table_name,
@@ -1262,10 +1266,8 @@ def render_ontology_table(table_name, data, predicates: list = None):
         if fmt.lower() == "csv":
             delimiter = ","
             mt = "text/comma-separated-values"
-        return Response(
-            terms2tsv(CONN, data_subset, delimiter=delimiter, sep=field_sep, statement=table_name),
-            mimetype=mt,
-        )
+        data = terms2dicts(CONN, data_subset, sep=field_sep, statement=table_name)
+        return Response(dicts2tsv(data, data[0].keys(), delimiter=delimiter), mimetype=mt)
     else:
         return abort(400, "Unknown export format: " + fmt)
 
