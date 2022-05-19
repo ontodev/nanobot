@@ -3,3 +3,6 @@ hiccupy==1.0.0
 lark
 SQLAlchemy
 xlsx2csv
+cmi-pb-terminology @ git+https://github.com/jamesaoverton/cmi-pb-terminology.git@next-2
+ontodev-gadget @ git+https://github.com/ontodev/gadget.git
+ontodev-sprocket @ git+https://github.com/ontodev/sprocket.git@standalone-table

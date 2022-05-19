@@ -2,22 +2,14 @@
 
 ## Setup
 
-`nanobot` requires Python version >=3.9. Ensure you have this installed, then set up a virtual environment:
+`nanobot` requires Python version >=3.9. Ensure you have this installed, then set up a virtual environment and install `nanobot` and its dependencies:
 ```
 $ python3 -m venv .venv
 $ source .venv/bin/activate
+$ python3 -m pip install -e .
 ```
 
-Next, set up the requirements for `nanobot`:
-1. Install the requirements file: `python3 -m pip install -r requirements.txt`
-2. Install spocket: `python3 -m pip install git+https://github.com/ontodev/sprocket.git@standalone-table`
-3. Install gadget: `python3 -m pip install git+https://github.com/ontodev/gadget.git`
-4. Install `wiring.py` following the directions [here](https://github.com/ontodev/wiring.py)
-5. Install `cmi_pb_script`:
-	- Clone the [cmi-pb-terminology](https://github.com/jamesaoverton/cmi-pb-terminology/) repo: `git clone https://github.com/jamesaoverton/cmi-pb-terminology.git`
-	- Navigate to that directory: `cd cmi-pb-terminology`
-	- Checkout the development branch: `git checkout next-2`
-	- Install the `src` directory: `python3 -m pip install src/`
+Finally, you will need to install `wiring.py` following the directions [here](https://github.com/ontodev/wiring.py)
 
 ## Database
 
