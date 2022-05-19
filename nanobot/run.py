@@ -85,6 +85,7 @@ OPTIONS = {
     "default_params": {},
     "default_table": None,
     "hide_index": False,
+    "import_table": None,
     "max_children": 20,
     "synonym": "IAO:0000118",
     "title": "Terminology",
@@ -195,8 +196,10 @@ def table(table_name):
             if not term_ids:
                 return render_template(
                     "template.html",
-                    project_name=OPTIONS["title"],
+                    base_ontology=OPTIONS["base_ontology"],
+                    import_table=OPTIONS["import_table"],
                     ontologies=get_display_ontologies(),
+                    project_name=OPTIONS["title"],
                     show_search=True,
                     subtitle=f"No results for '{search_text}'",
                     table_name=table_name,
@@ -209,6 +212,8 @@ def table(table_name):
                 return response
             return render_template(
                 "template.html",
+                base_ontology=OPTIONS["base_ontology"],
+                import_table=OPTIONS["import_table"],
                 project_name=OPTIONS["title"],
                 html=response,
                 ontologies=get_display_ontologies(),
@@ -226,7 +231,9 @@ def table(table_name):
             return response
         return render_template(
             "template.html",
+            base_ontology=OPTIONS["base_ontology"],
             html=response,
+            import_table=OPTIONS["import_table"],
             ontologies=get_display_ontologies(),
             project_name=OPTIONS["title"],
             show_search=True,
@@ -291,10 +298,13 @@ def table(table_name):
 
     if view == "form":
         if not form_html:
-            row = {c: None for c in cols if c != "row_number"}
+            # Some values may be filled in from request args, otherwise values are blank
+            row = {c: request.args.get(c) for c in cols if c != "row_number"}
             form_html = get_row_as_form(table_name, row)
         return render_template(
             "data_form.html",
+            base_ontology=OPTIONS["base_ontology"],
+            import_table=OPTIONS["import_table"],
             project_name=OPTIONS["title"],
             messages=messages,
             ontologies=get_display_ontologies(),
@@ -326,7 +336,9 @@ def table(table_name):
         return response
     return render_template(
         "template.html",
+        base_ontology=OPTIONS["base_ontology"],
         html=response,
+        import_table=OPTIONS["import_table"],
         project_name=OPTIONS["title"],
         table_name=table_name,
         tables=get_display_tables(),
@@ -404,6 +416,8 @@ def term(table_name, term_id):
             return response
         return render_template(
             "template.html",
+            base_ontology=OPTIONS["base_ontology"],
+            import_table=OPTIONS["import_table"],
             project_name=OPTIONS["title"],
             html=response,
             ontologies=get_display_ontologies(),
@@ -992,7 +1006,9 @@ def render_row_from_database(table_name, term_id, row_number):
             table_url = url_for("cmi-pb.row", table_name=table_name, row_number=row_number)
         return render_template(
             "data_form.html",
+            base_ontology=OPTIONS["base_ontology"],
             base_url=url_for("cmi-pb.table", table_name=table_name),
+            import_table=OPTIONS["import_table"],
             project_name=OPTIONS["title"],
             messages=messages,
             ontologies=get_display_ontologies(),
@@ -1028,6 +1044,8 @@ def render_row_from_database(table_name, term_id, row_number):
         return response
     return render_template(
         "template.html",
+        base_ontology=OPTIONS["base_ontology"],
+        import_table=OPTIONS["import_table"],
         project_name=OPTIONS["title"],
         html=response,
         ontologies=get_display_ontologies(),
@@ -1325,7 +1343,9 @@ def render_subclass_of(table_name, param, arg):
     return render_template(
         "template.html",
         add_params=f"{param}={arg}",
+        base_ontology=OPTIONS["base_ontology"],
         html=response,
+        import_table=OPTIONS["import_table"],
         ontologies=get_display_ontologies(),
         project_name=OPTIONS["title"],
         show_search=True,
@@ -1443,6 +1463,8 @@ def render_term_form(table_name, term_id):
     FORM_ROW_ID = 0
     return render_template(
         "ontology_form.html",
+        base_ontology=OPTIONS["base_ontology"],
+        import_table=OPTIONS["import_table"],
         project_name=OPTIONS["title"],
         table_name=table_name,
         tables=get_display_tables(),
@@ -1474,6 +1496,8 @@ def render_tree(table_name, term_id: str = None):
 
     return render_template(
         "template.html",
+        base_ontology=OPTIONS["base_ontology"],
+        import_table=OPTIONS["import_table"],
         project_name=OPTIONS["title"],
         html=html,
         ontologies=get_display_ontologies(),
@@ -1630,6 +1654,7 @@ def run(
     default_params=None,
     default_table=None,
     hide_index=False,
+    import_table=None,
     log_file=None,
     max_children: int = 20,
     synonym: str = "IAO:0000118",
@@ -1644,6 +1669,8 @@ def run(
     :param default_params: the query parameters to use for the default_table redirection
     :param default_table: the name of the table to redirect to from index (if None, will show index)
     :param hide_index: if True, hide the table of type index
+    :param import_table: name of the ontology import table - this table must have the import module
+                         columns specified by https://github.com/ontodev/gadget
     :param log_file: path to a log file - if not provided, logging will output to console
     :param max_children: max number of child nodes to display in tree view
     :param synonym: ID for the annotation property to use as synonym in search table (IAO:0000118)

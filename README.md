@@ -43,6 +43,7 @@ The `run` function requires the database path and the table path, but also accep
 * `default_params`: the query parameters to use for the default_table redirection
 * `default_table`: the name of the table to redirect to from base URL (if not specified, an index page will be generated)
 * `hide_index`: if True, hide the table of type index
+* `import_table`: name of the import table for an ontology project - this table must have the headers needed for `gadget` [import modules](https://github.com/ontodev/gadget#creating-import-modules)
 * `log_file`: path to a log file - if not provided, logging will output to console
 * `max_children`: max number of child nodes to display in tree view
 * `synonym`: predicate ID for the annotation property to use as synonym in search table (default is IAO:0000118)

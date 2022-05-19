@@ -335,17 +335,34 @@
 		var includeEdit = true;
 		var includeNew = false;
 		var isOntology = false;
+		var isImport = false;
 		var ele = document.getElementById("sqlTableVertical");
 		if (ele === null) {
 			ele = document.getElementById("sqlTableHorizontal");
 			if (ele === null) {
-				ele = document.getElementById("gadgetTree");
-				if (ele === null) {
+				ele = document.getElementsByClassName("gadgetTree");
+				console.log(ele);
+				if (ele === undefined || ele.length === 0) {
 					// Not correct view - no edit button needed
 					return;
 				}
-				isOntology = true;
-				includeNew = true;
+				ele = ele[0];
+				var onTerm = document.getElementById("label");
+				if (ele.id === "{{ base_ontology }}-tree" && onTerm) {
+					isOntology = true;
+					includeNew = true;
+				} else if (ele.id == "{{ base_ontology }}-tree") {
+					// no label means we aren't on a term
+					isOntology = true;
+					includeNew = true;
+					includeEdit = false;
+				{% if import_table %}
+				} else if (onTerm) {
+					isImport = true;
+					includeNew = true;
+					includeEdit = false;
+				{% endif %}
+				}
 			} else {
 				// Multiple rows, include only 'new' button
 				includeEdit = false;
@@ -359,6 +376,14 @@
 				var newURL = new URL(window.location.href);
 				newURL.searchParams.set("view", "form");
 				newURL.searchParams.set("action", "new");
+			{% if import_table %}
+			} else if (isImport) {
+				var curURLParts = window.location.href.split('?')[0].split("/");
+				var termID = curURLParts.pop()
+				var source = curURLParts.pop()
+				var label = document.getElementById("label").innerText;
+				var newURL = new URL(window.location.origin + '{{ url_for("cmi-pb.table", table_name=import_table, view="form") }}' + `&Source=${source}&ID=${termID}&Label=${label}`);
+			{% endif %}
 			} else {
 				var newURL = new URL(window.location.origin + '{{ url_for("cmi-pb.table", table_name=table_name, view="form") }}');
 			}
@@ -367,7 +392,11 @@
 			newBtn.setAttribute("data-bs-placement", "left");
 			newBtn.setAttribute("href", newURL.toString());
 			newBtn.setAttribute("class", "btn btn-primary float btn-xl-plus");
-			newBtn.setAttribute("title", "New");
+			if (!isImport) {
+				newBtn.setAttribute("title", "New");
+			} else {
+				newBtn.setAttribute("title", "Add term to {{ base_ontology }}");
+			}
 			newBtn.innerHTML = '<i class="bi-plus"></i>';
 			container.parentElement.insertBefore(newBtn, container);
 		}
