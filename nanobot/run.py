@@ -1653,6 +1653,8 @@ def run(
     cgi_path=None,
     default_params=None,
     default_table=None,
+    flask_host="127.0.0.1",
+    flask_port=5000,
     hide_index=False,
     import_table=None,
     log_file=None,
@@ -1668,6 +1670,8 @@ def run(
                      - this will run the app in CGI mode
     :param default_params: the query parameters to use for the default_table redirection
     :param default_table: the name of the table to redirect to from index (if None, will show index)
+    :param flask_host: host to run the Flask app on
+    :param flask_port: port to run the Flask app on
     :param hide_index: if True, hide the table of type index
     :param import_table: name of the ontology import table - this table must have the import module
                          columns specified by https://github.com/ontodev/gadget
@@ -1718,4 +1722,4 @@ def run(
         CGIHandler().run(app)
     else:
         LOGGER.error(os.path.abspath(os.path.join(os.path.dirname(__file__), "templates")))
-        app.run()
+        app.run(host=flask_host, port=flask_port)
