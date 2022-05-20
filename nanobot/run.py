@@ -1485,7 +1485,6 @@ def render_tree(table_name, term_id: str = None):
 
     # nothing to search, just return the tree view
     href = unquote(url_for("cmi-pb.term", table_name=table_name, view="tree", term_id="{curie}"))
-    logging.error(OPTIONS["tree_predicates"])
     html = gadget_tree(
         CONN,
         href=href,
