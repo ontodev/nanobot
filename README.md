@@ -50,3 +50,4 @@ The `run` function requires the database path and the table path, but also accep
 * `max_children`: max number of child nodes to display in tree view
 * `synonym`: predicate ID for the annotation property to use as synonym in search table (default is IAO:0000118)
 * `title`: project title to display in header bar
+* `tree_predicates`: list of predicate IDs in order that they should be displayed in the tree view - all remaining predicates should be specified with "\*"

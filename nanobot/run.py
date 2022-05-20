@@ -89,6 +89,7 @@ OPTIONS = {
     "max_children": 20,
     "synonym": "IAO:0000118",
     "title": "Terminology",
+    "tree_predicates": None,
 }
 
 
@@ -1484,10 +1485,12 @@ def render_tree(table_name, term_id: str = None):
 
     # nothing to search, just return the tree view
     href = unquote(url_for("cmi-pb.term", table_name=table_name, view="tree", term_id="{curie}"))
+    logging.error(OPTIONS["tree_predicates"])
     html = gadget_tree(
         CONN,
         href=href,
         include_search=False,
+        predicate_ids=OPTIONS["tree_predicates"],
         standalone=False,
         max_children=OPTIONS["max_children"],
         statement=table_name,
@@ -1661,6 +1664,7 @@ def run(
     max_children: int = 20,
     synonym: str = "IAO:0000118",
     title: str = "Terminology",
+    tree_predicates: list = None,
 ):
     """
     :param db: path to database
@@ -1679,6 +1683,9 @@ def run(
     :param max_children: max number of child nodes to display in tree view
     :param synonym: ID for the annotation property to use as synonym in search table (IAO:0000118)
     :param title: project title to display in header
+    :param tree_predicates: ordered list of predicates to display in tree browser - all remaining
+                            predicates can be displayed in alphabetical order after the sorted
+                            predicates using '*'
     """
     global CONFIG, CONN, LOGGER, OPTIONS
 
