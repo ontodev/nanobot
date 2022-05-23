@@ -403,13 +403,14 @@ def term(table_name, term_id):
             return response
 
         # Determine if we need to include add/edit buttons
-        term_loc = get_term_location(term_id)
         add_btn = None
         edit_btn = None
+        term_loc = get_term_location(term_id)
         if term_loc:
             edit_btn = {
                 "text": "Edit term in " + term_loc,
-                "url": url_for("cmi-pb.term", table_name=term_loc, term_id=term_id, view="form"),
+                "url": url_for("cmi-pb.term", table_name=term_loc, term_id=term_id,
+                               view="form"),
             }
             if table_name == OPTIONS["base_ontology"] and term_loc != OPTIONS["import_table"]:
                 # Always include an add button which adds a new term in same template
@@ -417,20 +418,20 @@ def term(table_name, term_id):
                     "text": "New term in " + term_loc,
                     "url": url_for("cmi-pb.table", table_name=term_loc, view="form"),
                 }
-            elif table_name != OPTIONS["base_ontology"] and OPTIONS["import_table"]:
-                # Only include add button if its not already in import
-                term_label = gs.get_labels(CONN, [term_id], statement=table_name)[term_id]
-                url_args = {
-                    "table_name": OPTIONS["import_table"],
-                    "view": "form",
-                    "Source": table_name,
-                    "ID": term_id,
-                    "Label": term_label,
-                }
-                add_btn = {
-                    "text": "Add to " + OPTIONS["base_ontology"],
-                    "url": url_for("cmi-pb.table", **url_args),
-                }
+        elif table_name != OPTIONS["base_ontology"] and OPTIONS["import_table"]:
+            # Only include add button if its not already in import
+            term_label = gs.get_labels(CONN, [term_id], statement=table_name)[term_id]
+            url_args = {
+                "table_name": OPTIONS["import_table"],
+                "view": "form",
+                "Source": table_name,
+                "ID": term_id,
+                "Label": term_label,
+            }
+            add_btn = {
+                "text": "Add to " + OPTIONS["base_ontology"],
+                "url": url_for("cmi-pb.table", **url_args),
+            }
 
         return render_template(
             "template.html",
