@@ -292,22 +292,10 @@
 </body>
 <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/typeahead.js/0.11.1/typeahead.bundle.min.js"></script>
 <script>
-	function showVertical(rowNum, offset) {
-		/**
-		 * Show the given row in vertical view. This overrides sprocket default behavior,
-		 * as we are redirecting to {table_name}/{primary_key}.
-		 */
-		// Get the primary key for this row
-		var sqlPK = document.getElementById(`pk${rowNum}`).innerText;
-		var newURL = "{{ url_for('cmi-pb.table', table_name=table_name) }}";
-		newURL += "/" + sqlPK;
-		window.location.href = newURL;
-	}
-
 	function show_children() {
 		/**
 		 * Redirect to sprocket table search results when clicking view all children.
-		 * This overrides gizmos default behavior.
+		 * This overrides gadget default behavior.
 		 */
 		var curURL = window.location.href;
 		var tableURL = curURL.substr(0, curURL.lastIndexOf("/"));
@@ -341,7 +329,6 @@
 			ele = document.getElementById("sqlTableHorizontal");
 			if (ele === null) {
 				ele = document.getElementsByClassName("gadgetTree");
-				console.log(ele);
 				if (ele === undefined || ele.length === 0) {
 					// Not correct view - no edit button needed
 					return;
@@ -457,6 +444,12 @@
 		$(node).bind('click', function(e) {
 		  $(node).select();
 		});
+		var cls = node.className;
+		if (cls.includes("is-invalid")) {
+			var parent = node.parentElement;
+			var parentCls = parent.className;
+			parent.className = parentCls + " is-invalid";
+		}
 	}
 
 	// Configure typeahead for search

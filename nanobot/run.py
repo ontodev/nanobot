@@ -323,6 +323,9 @@ def table(table_name):
             request.args,
             base_url=url_for("cmi-pb.table", table_name=table_name),
             display_messages=messages,
+            edit_link=unquote(
+                url_for("cmi-pb.term", table_name=table_name, term_id="{row_id}", view="form")
+            ),
             ignore_cols=["row_number"],
             ignore_params=["project-name", "branch-name", "view-path"],
             primary_key=pk,
@@ -408,7 +411,9 @@ def term(table_name, term_id):
         else:
             predicates = gs.get_ids(CONN, id_type="predicate", statement=table_name)
 
-        data = gs.get_objects(CONN, predicates, include_all_predicates=False, statement=table_name, term_ids=[term_id])
+        data = gs.get_objects(
+            CONN, predicates, include_all_predicates=False, statement=table_name, term_ids=[term_id]
+        )
         lbls = data[term_id].get("rdfs:label")
         subtitle = lbls[0]["object"] if lbls else term_id
 
@@ -904,26 +909,38 @@ def get_transformations(table_name):
         all_types = get_all_datatypes(dt)
         # Currently we are only transforming ontology_id to tree links
         if "split_ontology_id" in all_types:
-            url_pat = unquote(
-                url_for(
-                    "cmi-pb.term",
-                    table_name=OPTIONS["base_ontology"],
-                    term_id="TERM",
-                    view="tree",
+            url_pat = (
+                unquote(
+                    url_for(
+                        "cmi-pb.term",
+                        table_name=OPTIONS["base_ontology"],
+                        term_id="TERM",
+                        view="tree",
+                    )
                 )
-            ).replace("+", " ").replace("TERM", "''' + c + '''")
-            transform[col] = f""""|".join(
+                .replace("+", " ")
+                .replace("TERM", "''' + c + '''")
+            )
+            transform[
+                col
+            ] = f""""|".join(
             [f'''<a href="{url_pat}">''' + c + "</a>" for c in '''{{{col}}}'''.split('|')])"""
         elif "split_ontology_label" in all_types:
-            url_pat = unquote(
-                url_for(
-                    "cmi-pb.table",
-                    table_name=OPTIONS["base_ontology"],
-                    text="TERM",
-                    exact="true",
+            url_pat = (
+                unquote(
+                    url_for(
+                        "cmi-pb.table",
+                        table_name=OPTIONS["base_ontology"],
+                        text="TERM",
+                        exact="true",
+                    )
                 )
-            ).replace("+", " ").replace("TERM", "''' + c + '''")
-            transform[col] = f""""|".join(
+                .replace("+", " ")
+                .replace("TERM", "''' + c + '''")
+            )
+            transform[
+                col
+            ] = f""""|".join(
             [f'''<a href="{url_pat}">''' + c + "</a>" for c in '''{{{col}}}'''.split('|')])"""
         elif "ontology_id" in all_types:
             url_pat = unquote(
@@ -1031,6 +1048,9 @@ def render_row_from_database(table_name, term_id, row_number):
             table_name,
             request_args,
             base_url=url_for("cmi-pb.table", table_name=table_name),
+            edit_link=unquote(
+                url_for("cmi-pb.term", table_name=table_name, term_id="{row_id}", view="form")
+            ),
             ignore_cols=["row_number"],
             ignore_params=["project-name", "branch-name", "view-path"],
             primary_key=get_primary_key(table_name),
@@ -1212,7 +1232,14 @@ def render_ontology_table(table_name, data, predicates: list = None):
     fmt = request.args.get("format")
     if not fmt:
         # Convert objects to hiccup with ofn
-        rendered = terms2dicts(CONN, data_subset, include_annotations=True, include_id=True, rdfa=True, statement=table_name)
+        rendered = terms2dicts(
+            CONN,
+            data_subset,
+            include_annotations=True,
+            include_id=True,
+            rdfa=True,
+            statement=table_name,
+        )
         for itm in rendered:
             # Render using hiccup module
             rendered_term = {}
@@ -1271,7 +1298,6 @@ def render_ontology_table(table_name, data, predicates: list = None):
                 base_url=base_url,
                 columns=[predicate_labels.get(p, p) for p in predicates],
                 ignore_params=["project-name", "branch-name", "view-path"],
-                include_expand=False,
                 show_filters=False,
                 standalone=False,
             )
@@ -1332,7 +1358,9 @@ def render_subclass_of(table_name, param, arg):
             CONN, id_or_labels=pred_labels, id_type="predicate", statement=table_name
         )
 
-    data = gs.get_objects(CONN, predicates, exclude_json=True, statement=table_name, term_ids=list(terms))
+    data = gs.get_objects(
+        CONN, predicates, exclude_json=True, statement=table_name, term_ids=list(terms)
+    )
     response = render_ontology_table(table_name, data, predicates=predicates)
     if isinstance(response, Response):
         return response
