@@ -340,6 +340,10 @@ def table(table_name):
         return response
     return render_template(
         "template.html",
+        add_btn={
+            "text": "New row",
+            "url": url_for("cmi-pb.table", table_name=table_name, view="form"),
+        },
         base_ontology=OPTIONS["base_ontology"],
         html=response,
         import_table=OPTIONS["import_table"],
@@ -369,33 +373,10 @@ def term(table_name, term_id):
 
     view = request.args.get("view")
     if view == "form":
-        if request.method == "POST":
-            return abort(501, "POST method for ontology term is not implemented")
-            # term_id = update_term(table_name, pk)
-        # Get the name of the 'index' table which maps ID to template
-        term_index = get_term_index()
-        if term_index and term_index in get_sql_tables(CONN):
-            # Check that 'table' is in the columns, otherwise we don't know which template
-            index_cols = get_sql_columns(CONN, get_term_index())
-            if "table" in index_cols:
-                # Try to find a template for this term & redirect to the form for that
-                res = CONN.execute(
-                    sql_text(f'SELECT "table" FROM "{term_index}" WHERE ID == :term_id'),
-                    term_id=term_id,
-                ).fetchone()
-                if res:
-                    if request.args.get("action") == "new":
-                        # New term in same template
-                        return redirect(
-                            url_for("cmi-pb.table", table_name=res["table"], view="form")
-                        )
-                    return redirect(
-                        url_for(
-                            "cmi-pb.term", table_name=res["table"], term_id=term_id, view="form"
-                        )
-                    )
+        # TODO: implement editing ontology term from database
         # No template for this term -- show form for ontology term
-        return render_term_form(table_name, term_id)
+        # return render_term_form(table_name, term_id)
+        return abort(501, "Editing ontology terms is not yet implemented")
     elif view == "tree":
         return render_tree(table_name, term_id=term_id)
     elif request.args.get("format") == "json":
@@ -420,9 +401,42 @@ def term(table_name, term_id):
         response = render_ontology_table(table_name, data, predicates=predicates)
         if isinstance(response, Response):
             return response
+
+        # Determine if we need to include add/edit buttons
+        term_loc = get_term_location(term_id)
+        add_btn = None
+        edit_btn = None
+        if term_loc:
+            edit_btn = {
+                "text": "Edit term in " + term_loc,
+                "url": url_for("cmi-pb.term", table_name=term_loc, term_id=term_id, view="form"),
+            }
+            if table_name == OPTIONS["base_ontology"] and term_loc != OPTIONS["import_table"]:
+                # Always include an add button which adds a new term in same template
+                add_btn = {
+                    "text": "New term in " + term_loc,
+                    "url": url_for("cmi-pb.table", table_name=term_loc, view="form"),
+                }
+            elif table_name != OPTIONS["base_ontology"] and OPTIONS["import_table"]:
+                # Only include add button if its not already in import
+                term_label = gs.get_labels(CONN, [term_id], statement=table_name)[term_id]
+                url_args = {
+                    "table_name": OPTIONS["import_table"],
+                    "view": "form",
+                    "Source": table_name,
+                    "ID": term_id,
+                    "Label": term_label,
+                }
+                add_btn = {
+                    "text": "Add to " + OPTIONS["base_ontology"],
+                    "url": url_for("cmi-pb.table", **url_args),
+                }
+
         return render_template(
             "template.html",
+            add_btn=add_btn,
             base_ontology=OPTIONS["base_ontology"],
+            edit_btn=edit_btn,
             import_table=OPTIONS["import_table"],
             project_name=OPTIONS["title"],
             html=response,
@@ -457,9 +471,22 @@ def get_display_tables():
 
 
 def get_term_index():
+    """Get the table of type 'index'."""
     res = CONN.execute('SELECT "table" FROM "table" WHERE "type" = "index"').fetchone()
     if res:
         return res["table"]
+    return None
+
+
+def get_term_location(term_id):
+    """Return the source table for an ontology term ID, where the term exists in the term index."""
+    term_index = get_term_index()
+    if term_index:
+        res = CONN.execute(
+            sql_text(f'SELECT "table" FROM "{term_index}" WHERE ID == :term_id'), term_id=term_id,
+        ).fetchone()
+        if res:
+            return res["table"]
     return None
 
 
@@ -1066,6 +1093,10 @@ def render_row_from_database(table_name, term_id, row_number):
     return render_template(
         "template.html",
         base_ontology=OPTIONS["base_ontology"],
+        edit_btn={
+            "text": "Edit row",
+            "url": url_for("cmi-pb.term", table_name=table_name, term_id=term_id),
+        },
         import_table=OPTIONS["import_table"],
         project_name=OPTIONS["title"],
         html=response,
@@ -1187,6 +1218,11 @@ def render_ontology_table(table_name, data, predicates: list = None):
     if not predicates:
         predicates = set(chain.from_iterable([list(x.keys()) for x in data.values()]))
     predicate_labels = gs.get_labels(CONN, list(predicates), statement=table_name)
+
+    # TODO: how do we want to handle these? Sometimes they are URNs, e.g. swrl
+    # Exclude full IRIs
+    data = {k: v for k, v in data.items() if not k.startswith("<")}
+
     # Order based on raw value of 'object', don't worry about rendering
     if request.args.get("order"):
         label_to_id = {v: k for k, v in predicate_labels.items()}
@@ -1524,156 +1560,50 @@ def render_tree(table_name, term_id: str = None):
         term_id=term_id,
     )
 
+    # Determine if we need to include add/edit buttons
+    term_loc = get_term_location(term_id)
+    add_btn = None
+    edit_btn = None
+    if term_loc:
+        edit_btn = {
+            "text": "Edit term in " + term_loc,
+            "url": url_for("cmi-pb.term", table_name=term_loc, term_id=term_id, view="form"),
+        }
+        if table_name == OPTIONS["base_ontology"] and term_loc != OPTIONS["import_table"]:
+            # Always include an add button which adds a new term in same template
+            add_btn = {
+                "text": "New term in " + term_loc,
+                "url": url_for("cmi-pb.table", table_name=term_loc, view="form"),
+            }
+        elif table_name != OPTIONS["base_ontology"] and OPTIONS["import_table"]:
+            # Only include add button if its not already in import
+            term_label = gs.get_labels(CONN, [term_id], statement=table_name)[term_id]
+            url_args = {
+                "table_name": OPTIONS["import_table"],
+                "view": "form",
+                "Source": table_name,
+                "ID": term_id,
+                "Label": term_label,
+            }
+            add_btn = {
+                "text": "Add to " + OPTIONS["base_ontology"],
+                "url": url_for("cmi-pb.table", **url_args),
+            }
+
     return render_template(
         "template.html",
+        add_btn=add_btn,
         base_ontology=OPTIONS["base_ontology"],
-        import_table=OPTIONS["import_table"],
-        project_name=OPTIONS["title"],
+        edit_btn=edit_btn,
         html=html,
+        import_table=OPTIONS["import_table"],
         ontologies=get_display_ontologies(),
+        project_name=OPTIONS["title"],
         show_search=True,
         table_name=table_name,
         tables=get_display_tables(),
         title=get_ontology_title(table_name, table_active=False, term_id=term_id),
     )
-
-
-def update_term(table_name, term_id):
-    # TODO: new LDTab structure
-    # Get current annotations for this term
-    query = sql_text(
-        f"""SELECT predicate, object, datatype, annotation FROM "{table_name}"
-        WHERE subject = :s AND object IS NOT NULL AND predicate NOT IN :logic"""
-    ).bindparams(bindparam("s"), bindparam("logic", expanding=True))
-    results = CONN.execute(query, s=term_id, logic=LOGIC_PREDICATES)
-    annotations = defaultdict(list)
-    for res in results:
-        if res["predicate"] not in annotations:
-            annotations[res["predicate"]] = list()
-        annotations[res["predicate"]].append(res)
-
-    # Get current logic for this term
-    logic = defaultdict(list)
-    query = sql_text(
-        f"""SELECT predicate, object, datatype, annotation FROM {table_name}
-        WHERE subject = :s AND object IS NOT NULL AND predicate IN :logic"""
-    ).bindparams(bindparam("s"), bindparam("logic", expanding=True))
-    results = CONN.execute(query, s=term_id, logic=LOGIC_PREDICATES)
-    for res in results:
-        if res["predicate"] not in logic:
-            logic[res["predicate"]] = list()
-        logic[res["predicate"]].append(res)
-
-    # Get all annotation properties so we know where to put predicates
-    # aps = get_annotation_properties(table_name)
-
-    form_annotations = defaultdict(list)
-    form_logic = defaultdict(list)
-    for predicate, value in request.form.items():
-        if predicate == "ID":
-            continue
-        if predicate not in LOGIC_PREDICATES:
-            if predicate in annotations:
-                # Predicate is already used on term, so it will be checked
-                continue
-            if predicate not in form_annotations:
-                form_annotations[predicate] = list()
-            form_annotations[predicate].append(value)
-        else:
-            if predicate in logic:
-                # Predicate is already used on term, so it will be checked
-                continue
-            if predicate not in form_logic:
-                form_logic[predicate] = list()
-            form_logic[predicate].append(value)
-
-    # Look for changes to existing annotation predicates on this term
-    for predicate, value_objects in annotations.items():
-        new_values = request.form.getlist(predicate)
-        # Removed objects
-        removed = [vo for vo in value_objects if vo["object"] not in new_values]
-        # Added values
-        added = [nv for nv in new_values if nv not in [vo["object"] for vo in value_objects]]
-        for r in removed:
-            query = sql_text(
-                f'DELETE FROM "{table_name}" WHERE subject = :s AND predicate = :p AND object = :v'
-            )
-            CONN.execute(query, s=term_id, p=predicate, v=r)
-        for a in added:
-            # TODO: set datatype (need it on form first) & annotation,
-            #       defaulting to xsd:string for everything for now
-            query = sql_text(
-                f"""INSERT INTO "{table_name}" (subject, predicate, object, datatype)
-                VALUES (:s, :p, :v, 'xsd:string')"""
-            )
-            CONN.execute(query, s=term_id, p=predicate, v=a)
-
-    # Add new annotation predicates + values (predicates that have not been used on this term)
-    for predicate, values in form_annotations.items():
-        for v in values:
-            query = sql_text(
-                f"""INSERT INTO "{table_name}" (subject, predicate, object, datatype)
-                VALUES (:s, :p, :v, 'xsd:string')"""
-            )
-            CONN.execute(query, s=term_id, p=predicate, v=v)
-
-    # Look for changes to existing logic predicates on this term
-    for predicate, logic_objects in logic.items():
-        if predicate == "rdf:type" and any(
-            [
-                o
-                for o in [lo["object"] for lo in logic_objects]
-                if o
-                in [
-                    "owl:Class",
-                    "owl:AnnotationProperty",
-                    "owl:DataProperty",
-                    "owl:ObjectProperty",
-                    "owl:Datatype",
-                ]
-            ]
-        ):
-            # Only look at type for individuals
-            continue
-
-        new_objects = request.form.getlist(predicate)
-        # TODO: instead of getting IDs, use wiring to translate manchester into JSON object
-        new_obj_ids = gs.get_ids(CONN, id_or_labels=new_objects, statement=table_name)
-        if len(new_objects) > len(new_obj_ids):
-            LOGGER.error(
-                "Cannot get IDs for one or more terms from term list: " + ", ".join(new_objects)
-            )
-
-        # TODO: Compare JSON objects for _json datatypes, IRIs for everything else
-        removed = [lo for lo in logic_objects if lo["object"] not in new_objects]
-        added = [no for no in new_objects if no not in [vo["object"] for vo in logic_objects]]
-
-        # TODO: Do not remove owl:Thing
-        for r in removed:
-            # TODO: this will not work for the JSON objects
-            query = sql_text(
-                f"""DELETE FROM {table_name}
-                    WHERE subject = :s AND predicate = :p AND object = :v"""
-            )
-            CONN.execute(query, s=term_id, p=predicate, v=r)
-        for a in added:
-            # TODO: support adding annotations
-            query = sql_text(
-                f"""INSERT INTO "{table_name}" (subject, predicate, object, datatype)
-                VALUES (:s, :p, :o, '_IRI')"""
-            )
-            CONN.execute(query, s=term_id, p=predicate, o=a)
-
-    # Add new logic predicates + objects
-    for predicate, objects in form_logic.items():
-        # All new predicates
-        for o in objects:
-            query = sql_text(
-                f"""INSERT INTO "{table_name}" (subject, predicate, object, datatype)
-                            VALUES (:s, :p, :o, '_IRI')"""
-            )
-            CONN.execute(query, s=term_id, p=predicate, o=o)
-    return term_id
 
 
 def run(
