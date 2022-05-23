@@ -1561,20 +1561,21 @@ def render_tree(table_name, term_id: str = None):
     )
 
     # Determine if we need to include add/edit buttons
-    term_loc = get_term_location(term_id)
     add_btn = None
     edit_btn = None
-    if term_loc:
-        edit_btn = {
-            "text": "Edit term in " + term_loc,
-            "url": url_for("cmi-pb.term", table_name=term_loc, term_id=term_id, view="form"),
-        }
-        if table_name == OPTIONS["base_ontology"] and term_loc != OPTIONS["import_table"]:
-            # Always include an add button which adds a new term in same template
-            add_btn = {
-                "text": "New term in " + term_loc,
-                "url": url_for("cmi-pb.table", table_name=term_loc, view="form"),
+    if term_id and term_id not in gs.TOP_LEVELS:
+        term_loc = get_term_location(term_id)
+        if term_loc:
+            edit_btn = {
+                "text": "Edit term in " + term_loc,
+                "url": url_for("cmi-pb.term", table_name=term_loc, term_id=term_id, view="form"),
             }
+            if table_name == OPTIONS["base_ontology"] and term_loc != OPTIONS["import_table"]:
+                # Always include an add button which adds a new term in same template
+                add_btn = {
+                    "text": "New term in " + term_loc,
+                    "url": url_for("cmi-pb.table", table_name=term_loc, view="form"),
+                }
         elif table_name != OPTIONS["base_ontology"] and OPTIONS["import_table"]:
             # Only include add button if its not already in import
             term_label = gs.get_labels(CONN, [term_id], statement=table_name)[term_id]
