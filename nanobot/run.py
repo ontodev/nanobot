@@ -1424,7 +1424,7 @@ def render_subclass_of(table_name, param, arg):
 
 def render_term_form(table_name, term_id):
     global FORM_ROW_ID
-    entity_type = gs.get_top_entity_type(CONN, term_id, statements=table_name)
+    entity_type = gs.get_top_entity_type(CONN, term_id, statement=table_name)
 
     # Get all annotation properties
     query = sql_text(
