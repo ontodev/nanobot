@@ -38,7 +38,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Connection
 from sqlalchemy.sql.expression import bindparam
 from sqlalchemy.sql.expression import text as sql_text
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 from urllib.parse import unquote
 from werkzeug.exceptions import HTTPException
 
@@ -450,7 +450,12 @@ def term(table_name, term_id):
         )
 
 
-def flatten(lst):
+def flatten(lst: list) -> list:
+    """Flatten a nested list.
+
+    :param lst: nested list to flatten
+    :return: flat list
+    """
     for el in lst:
         if isinstance(el, list) and not isinstance(el, (str, bytes)):
             yield from flatten(el)
@@ -458,11 +463,19 @@ def flatten(lst):
             yield el
 
 
-def get_display_ontologies():
+def get_display_ontologies() -> list:
+    """Return a list of ontology tables from all database tables to display in navigation.
+
+    :return: list of ontology tables
+    """
     return [t for t in get_sql_tables(CONN) if is_ontology(t)]
 
 
-def get_display_tables():
+def get_display_tables() -> list:
+    """Return a list of data tables to display in navigation.
+
+    :return: list of data tables
+    """
     term_index = get_term_index()
     if term_index and OPTIONS["hide_index"]:
         tables = [x for x in get_sql_tables(CONN) if x != term_index]
@@ -471,16 +484,23 @@ def get_display_tables():
     return [t for t in tables if not is_ontology(t)]
 
 
-def get_term_index():
-    """Get the table of type 'index'."""
+def get_term_index() -> Union[str, None]:
+    """Get the table of type 'index'.
+
+    :return: table name of index table, or None
+    """
     res = CONN.execute('SELECT "table" FROM "table" WHERE "type" = "index"').fetchone()
     if res:
         return res["table"]
     return None
 
 
-def get_term_location(term_id):
-    """Return the source table for an ontology term ID, where the term exists in the term index."""
+def get_term_location(term_id: str) -> Union[str, None]:
+    """Return the source table for an ontology term ID, where the term exists in the term index.
+
+    :param term_id: ontology term to get source table of
+    :return: source table, or None
+    """
     term_index = get_term_index()
     if term_index:
         res = CONN.execute(
@@ -494,7 +514,12 @@ def get_term_location(term_id):
 # ----- DATA TABLE METHODS -----
 
 
-def get_all_datatypes(datatype):
+def get_all_datatypes(datatype: str) -> list:
+    """Given a datatype, get all ancestor datatypes from the 'datatype' table.
+
+    :param datatype: datatype to get all ancestor datatypes of
+    :return: all ancestor datatypes of given datatype (inclusive of given datatype)
+    """
     query = sql_text(
         """WITH RECURSIVE ancestors(child, parent) AS (
             SELECT DISTINCT
@@ -518,18 +543,36 @@ def get_all_datatypes(datatype):
 
 
 def get_hiccup_form_row(
-    header,
-    allow_delete=False,
-    allowed_values: Optional[list] = None,
-    annotations=None,
-    description=None,
-    display_header=None,
-    html_type="text",
-    message=None,
-    readonly=False,
-    valid=None,
-    value=None,
-):
+    header: str,
+    allow_delete: bool = False,
+    allowed_values: list = None,
+    annotations: dict = None,
+    description: str = None,
+    display_header: str = None,
+    html_type: str = "text",
+    message: str = None,
+    readonly: bool = False,
+    valid: Optional[bool] = None,
+    value: str = None,
+) -> list:
+    """Create a hiccup-style list for a form row.
+
+    :param header: header name for this row
+    :param allow_delete: if True, include an 'x' button to remove the row (used in ontology forms)
+    :param allowed_values: a list of allowed values for select, radio, and checkbox form fields
+    :param annotations: dict of predicate -> values for annotations on a predicate-object pair (used in ontology forms)
+    :param description: if included, generate a tooltip containing this description for the field
+    :param display_header: if the label of the form field differs from the header, use this param to set what should be
+                           shown in the form. The 'header' is used to pass the value in the POST request.
+    :param html_type: the type of form field (text, select, radio, checkbox, search, textarea, number)
+    :param message: a validation message to include under the form field
+    :param readonly: if True, make the form field non-editable
+    :param valid: if False, set the form field to 'is-invalid', which displays an error in the HTML form. If True, set
+                  the form field to 'is-valid', which shows that the field passed validation. If None, do not add a
+                  validation class to the form field.
+    :param value: optional value to set the form field to
+    :return: hiccup-style list for the form row
+    """
     # TODO: support other HTML types: dropdown, boolean, etc...
     # TODO: handle datatypes for ontology forms (include_datatypes?)
     global FORM_ROW_ID
@@ -728,7 +771,13 @@ def get_hiccup_form_row(
     return ["div", {"class": "row py-1"}, header_col, value_col]
 
 
-def get_html_type_and_values(datatype, values=None) -> Tuple[Optional[str], Optional[list]]:
+def get_html_type_and_values(datatype: str, values: list = None) -> Tuple[Optional[str], Optional[list]]:
+    """Query the 'datatype' table for the HTML form field type and, maybe, a list of allowed values for the field.
+
+    :param datatype: datatype to get HTML type and allowed values of
+    :param values: allowed values from column (overrides datatype values)
+    :return: tuple of HTML type and allowed values for given datatype
+    """
     res = CONN.execute(
         'SELECT parent, "HTML type", condition FROM datatype WHERE datatype = :datatype',
         datatype=datatype,
@@ -750,10 +799,14 @@ def get_html_type_and_values(datatype, values=None) -> Tuple[Optional[str], Opti
     return None, None
 
 
-def get_messages(row):
-    """Extract messages from a validated row into a dictionary of messages."""
+def get_messages(data: dict) -> Dict[str, list]:
+    """Extract messages from a validated row into a dictionary of messages.
+
+    :param data: row data from database
+    :return: dict of message level -> list of messages at that level
+    """
     messages = defaultdict(list)
-    for header, details in row.items():
+    for header, details in data.items():
         if header == "row_number":
             continue
         if details["messages"]:
@@ -773,7 +826,12 @@ def get_messages(row):
     return messages
 
 
-def get_primary_key(table_name):
+def get_primary_key(table_name: str) -> str:
+    """Retrieve the primary key for a given table. Otherwise, 'row_number' is used as the primary key.
+
+    :param table_name: table to get primary key of
+    :return: primary key or 'row_number'
+    """
     query = sql_text(
         'SELECT "column" FROM "column" WHERE "table" = :table AND "structure" LIKE "%%primary%%"'
     )
@@ -784,12 +842,17 @@ def get_primary_key(table_name):
         return "row_number"
 
 
-def get_row_as_form(table_name, row):
-    """Transform a row either from query results or validation into a hiccup-style HTML form."""
+def get_row_as_form(table_name: str, data: dict) -> str:
+    """Transform a row either from query results or validation into an editable HTML form.
+
+    :param table_name: source table for row
+    :param data: row data from table
+    :return: string HTML for editable form for this row
+    """
     html = ["form", {"method": "post"}]
     row_valid = None
 
-    for header, value in row.items():
+    for header, value in data.items():
         if header == "row_number" or header.endswith("_meta"):
             continue
 
@@ -809,7 +872,7 @@ def get_row_as_form(table_name, row):
         else:
             # This row is coming from a query result
             # Check for meta row
-            meta_row = row.get(header + "_meta")
+            meta_row = data.get(header + "_meta")
             if meta_row:
                 meta = json.loads(meta_row)
                 if meta.get("value"):
@@ -914,17 +977,29 @@ def get_row_as_form(table_name, row):
     return render(html)
 
 
-def get_row_number(table_name, primary_key):
+def get_row_number(table_name: str, pk_value: str) -> Optional[int, None]:
+    """Given a table name and the value of a primary key, return the row number for the row with that primary key value.
+
+    :param table_name: table to get row number from
+    :param pk_value: primary key value for row to get row number of
+    :return: row number for row with given primary key, or None if primary key is not found
+    """
     pk_col = get_primary_key(table_name)
     res = CONN.execute(
-        sql_text(f'SELECT row_number FROM "{table_name}" WHERE "{pk_col}" = :pk'), pk=primary_key
+        sql_text(f'SELECT row_number FROM "{table_name}" WHERE "{pk_col}" = :pk'), pk=pk_value
     ).fetchone()
     if not res:
         return None
     return int(res["row_number"])
 
 
-def get_transformations(table_name):
+def get_transformations(table_name: str) -> dict:
+    """Get display value transformations for all columns given table. These are used to create links for ontology terms
+    from templates to the tree browser.
+
+    :param table_name: table to get any value transformations of
+    :return: dict of column name -> transformation
+    """
     transform = {}
     cols = get_sql_columns(CONN, table_name)
     query = sql_text(
@@ -993,7 +1068,15 @@ def get_transformations(table_name):
     return transform
 
 
-def render_row_from_database(table_name, term_id, row_number):
+def render_row_from_database(table_name: str, term_id: str, row_number: int) -> Optional[Response, str]:
+    """Render the data from a row in a database using query parameters. If a format is not specified, an HTML string is
+    returned. Otherwise, the data in given format is returned as a Response object for the client to download.
+
+    :param table_name: table that the row exists in
+    :param term_id: primary key of row
+    :param row_number: row number of row
+    :return: HTML string or Response
+    """
     view = request.args.get("view")
     messages = None
     form_html = None
@@ -1108,12 +1191,18 @@ def render_row_from_database(table_name, term_id, row_number):
     )
 
 
-def validate_table_row(table_name, row, row_number=None):
-    """Perform validation on a row"""
+def validate_table_row(table_name: str, data: dict, row_number: int = None) -> dict:
+    """Perform validation on a row.
+
+    :param table_name: source table
+    :param data: row data from source table
+    :param row_number: row number of row, or None for a new row
+    :return: validated row
+    """
     # Transform row into dict expected for validate
     if row_number:
         result_row = {}
-        for column, value in row.items():
+        for column, value in data.items():
             result_row[column] = {
                 "value": value,
                 "valid": True,
@@ -1122,27 +1211,36 @@ def validate_table_row(table_name, row, row_number=None):
         # Row number may be different than row ID, if this column is used
         return validate_row(CONFIG, table_name, result_row, row_number=row_number)
     else:
-        return validate_row(CONFIG, table_name, row, existing_row=False)
+        return validate_row(CONFIG, table_name, data, existing_row=False)
 
 
 # ----- ONTOLOGY TABLE METHODS -----
 
 
-def dump_search_results(table_name, search_arg=None):
+def dump_search_results(table_name: str) -> str:
+    """Return the ontology term search results as a JSON string. Flask request.args are used to get the search text.
+
+    :param table_name: table to search in
+    :return: search results
+    """
     search_text = request.args.get("text")
     if not search_text:
         return json.dumps([])
-    if search_arg:
-        terms = get_terms_from_arg(table_name, search_arg).keys()
-    else:
-        terms = []
     # return the raw search results to use in typeahead
     return json.dumps(
-        search(CONN, limit=30, search_text=search_text, statement=table_name, term_ids=terms)
+        search(CONN, limit=30, search_text=search_text, statement=table_name)
     )
 
 
-def get_ontology_title(table_name, table_active=True, term_id=None):
+def get_ontology_title(table_name: str, table_active: bool = True, term_id: str = None) -> str:
+    """Given an ontology statement table, get the ontology title element which includes the ontology title and a link to
+    tree and table views.
+
+    :param table_name: ontology statement table
+    :param table_active: if True, the active page is the 'table' page
+    :param term_id: current term ID, if on a term
+    :return: string HTML element
+    """
     # Try to get an ontology title using the dce:title property
     ontology_title = None
     ontology_iri = gs.get_ontology_iri(CONN, statement=table_name)
@@ -1180,7 +1278,13 @@ def get_ontology_title(table_name, table_active=True, term_id=None):
     )
 
 
-def get_terms_from_arg(table_name, arg):
+def get_terms_from_arg(table_name: str, arg: str) -> dict:
+    """Using a Swagger-like query parameter, get a dict of the ontology term IDs -> labels matched by that arg.
+
+    :param table_name: ontology statement table to search for IDs and labels
+    :param arg: Swagger-like arg (e.g. like.%foo%)
+    :return: dict of term ID -> label for each term matched by the arg
+    """
     try:
         parsed = PARSER.parse(arg)
         res = SprocketTransformer().transform(parsed)
@@ -1193,7 +1297,13 @@ def get_terms_from_arg(table_name, arg):
     return gs.get_labels(CONN, parent_terms, statement=table_name)
 
 
-def get_terms_of_type(table_name, entity_type):
+def get_terms_of_type(table_name: str, entity_type: str) -> list:
+    """Get all ontology terms of a given entity type.
+
+    :param table_name: ontology statement table
+    :param entity_type: entity to get all instances of
+    :return: list of ontology terms of given type
+    """
     results = CONN.execute(
         sql_text(
             f"SELECT subject FROM \"{table_name}\" WHERE predicate = 'rdf:type' AND object = :type"
@@ -1203,16 +1313,22 @@ def get_terms_of_type(table_name, entity_type):
     return [res["subject"] for res in results]
 
 
-def is_ontology(table_name):
+def is_ontology(table_name: str) -> bool:
+    """Check if a given table is an LDTab ontology statement table.
+
+    :param table_name: table to check
+    :return: True if table is an LDTab ontology statement table"""
     columns = get_sql_columns(CONN, table_name)
     return {"subject", "predicate", "object", "datatype", "annotation"}.issubset(set(columns))
 
 
-def render_ontology_table(table_name, data, predicates: list = None):
-    """
+def render_ontology_table(table_name, data, predicates: list = None) -> Optional[Response, str]:
+    """Render an ontology statement table as a Response for downloads or an HTML table (string).
+
     :param table_name: name of SQL table that contains terms
     :param data: data to render - dict of term ID -> predicate ID -> list of JSON objects
     :param predicates: list of predicate IDs - if not provided, predicate IDs are taken from data
+    :return: Response or HTML string
     """
     # TODO: do we care about displaying annotations in this table view? Or only on term view?
     # Reverse the ID -> label dictionary to translate column names to IDs
@@ -1354,7 +1470,14 @@ def render_ontology_table(table_name, data, predicates: list = None):
         return abort(400, "Unknown export format: " + fmt)
 
 
-def render_subclass_of(table_name, param, arg):
+def render_subclass_of(table_name: str, param: str, arg: str) -> Optional[Response, str]:
+    """Render an ontology table that includes the subclasses of a given term.
+
+    :param table_name: ontology statement table
+    :param param: name of query parameter (subClassOf, subClassOf?, subClassOfplus, subClassOf*)
+    :param arg: value of query parameter (ontology term)
+    :return: Response or HTML string
+    """
     id_to_label = get_terms_from_arg(table_name, arg)
 
     terms = set()
@@ -1422,7 +1545,14 @@ def render_subclass_of(table_name, param, arg):
     )
 
 
-def render_term_form(table_name, term_id):
+def render_term_form(table_name: str, term_id: str) -> str:
+    """Generate an editable form for a term from an ontology table. This currently is in use, but you cannot POST from
+    the form. TODO: support LDTab
+
+    :param table_name: name of ontology statement table
+    :param term_id: term to generate a form for
+    :return: HTML page with form
+    """
     global FORM_ROW_ID
     entity_type = gs.get_top_entity_type(CONN, term_id, statement=table_name)
 
@@ -1544,7 +1674,14 @@ def render_term_form(table_name, term_id):
     )
 
 
-def render_tree(table_name, term_id: str = None):
+def render_tree(table_name: str, term_id: str = None) -> str:
+    """Generate the page for the tree view for an ontology statement table. If a term_id is not supplied, the default
+    'Class' page will show with a help message.
+
+    :param table_name: name of ontology statement table
+    :param term_id: optional term_id to render tree view for
+    :return: HTML page with tree view
+    """
     if not is_ontology(table_name):
         return abort(418, "Cannot show tree view for non-ontology table")
 
@@ -1625,7 +1762,8 @@ def run(
     title: str = "Terminology",
     tree_predicates: list = None,
 ):
-    """
+    """Run nanobot with supplied options.
+
     :param db: path to database
     :param table_config: path to table TSV file
     :param base_ontology: the name of the LDTab table for the base ontology of this project
