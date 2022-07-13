@@ -977,7 +977,7 @@ def get_row_as_form(table_name: str, data: dict) -> str:
     return render(html)
 
 
-def get_row_number(table_name: str, pk_value: str) -> Optional[int, None]:
+def get_row_number(table_name: str, pk_value: str) -> Optional[int]:
     """Given a table name and the value of a primary key, return the row number for the row with that primary key value.
 
     :param table_name: table to get row number from
@@ -1068,7 +1068,7 @@ def get_transformations(table_name: str) -> dict:
     return transform
 
 
-def render_row_from_database(table_name: str, term_id: str, row_number: int) -> Optional[Response, str]:
+def render_row_from_database(table_name: str, term_id: str, row_number: int) -> Optional[Response]:
     """Render the data from a row in a database using query parameters. If a format is not specified, an HTML string is
     returned. Otherwise, the data in given format is returned as a Response object for the client to download.
 
@@ -1322,7 +1322,7 @@ def is_ontology(table_name: str) -> bool:
     return {"subject", "predicate", "object", "datatype", "annotation"}.issubset(set(columns))
 
 
-def render_ontology_table(table_name, data, predicates: list = None) -> Optional[Response, str]:
+def render_ontology_table(table_name, data, predicates: list = None) -> Optional[Response]:
     """Render an ontology statement table as a Response for downloads or an HTML table (string).
 
     :param table_name: name of SQL table that contains terms
@@ -1470,7 +1470,7 @@ def render_ontology_table(table_name, data, predicates: list = None) -> Optional
         return abort(400, "Unknown export format: " + fmt)
 
 
-def render_subclass_of(table_name: str, param: str, arg: str) -> Optional[Response, str]:
+def render_subclass_of(table_name: str, param: str, arg: str) -> Optional[Response]:
     """Render an ontology table that includes the subclasses of a given term.
 
     :param table_name: ontology statement table
