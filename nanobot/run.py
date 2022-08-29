@@ -2,6 +2,7 @@ import gadget.sql as gs
 import json
 import logging
 import os
+import psycopg2
 import sqlite3
 import traceback
 
@@ -489,7 +490,7 @@ def get_term_index() -> Union[str, None]:
 
     :return: table name of index table, or None
     """
-    res = CONN.execute('SELECT "table" FROM "table" WHERE "type" = "index"').fetchone()
+    res = CONN.execute('SELECT "table" FROM "table" WHERE "type" = \'index\'').fetchone()
     if res:
         return res["table"]
     return None
@@ -833,11 +834,20 @@ def get_primary_key(table_name: str) -> str:
     :return: primary key or 'row_number'
     """
     query = sql_text(
-        'SELECT "column" FROM "column" WHERE "table" = :table AND "structure" LIKE "%%primary%%"'
+        'SELECT "column" FROM "column" WHERE "table" = :table AND "structure" LIKE \'%%primary%%\''
     )
     res = CONN.execute(query, table=table_name).fetchone()
     if res:
-        return res["column"]
+        # Postgresql seems to internally store column names as lower case. This only matters
+        # when you use double-quotes in your queries to protect column names. For example:
+        #   1) create table Bar (Foo text);
+        #   2) select Foo from Bar -> OK.
+        #   3) select "Foo" from "Bar" -> Not OK.
+        #   4) select "foo" from "bar" -> OK.
+        #   5) select foo from bar -> OK.
+        # Sqlite doesn't seem to care either way.
+        # Therefore it is safest in any case to use casefold() here.
+        return res["column"].casefold()
     else:
         return "row_number"
 
@@ -1002,6 +1012,9 @@ def get_transformations(table_name: str) -> dict:
     """
     transform = {}
     cols = get_sql_columns(CONN, table_name)
+    if not(cols):
+        return abort(400, f"No columns found for table '{table_name}'. Does '{table_name}' exist?")
+
     query = sql_text(
         f'SELECT "column", "datatype" FROM "column" WHERE "table" = :t AND "column" IN :cols'
     ).bindparams(bindparam("cols", expanding=True))
@@ -1716,18 +1729,20 @@ def render_tree(table_name: str, term_id: str = None) -> str:
                 }
         elif table_name != OPTIONS["base_ontology"] and OPTIONS["import_table"]:
             # Only include add button if its not already in import
-            term_label = gs.get_labels(CONN, [term_id], statement=table_name)[term_id]
-            url_args = {
-                "table_name": OPTIONS["import_table"],
-                "view": "form",
-                "Source": table_name,
-                "ID": term_id,
-                "Label": term_label,
-            }
-            add_btn = {
-                "text": "Add to " + OPTIONS["base_ontology"],
-                "url": url_for("cmi-pb.table", **url_args),
-            }
+            term_labels = gs.get_labels(CONN, [term_id], statement=table_name)
+            if term_labels:
+                term_label = term_labels[term_id]
+                url_args = {
+                    "table_name": OPTIONS["import_table"],
+                    "view": "form",
+                    "Source": table_name,
+                    "ID": term_id,
+                    "Label": term_label,
+                }
+                add_btn = {
+                    "text": "Add to " + OPTIONS["base_ontology"],
+                    "url": url_for("cmi-pb.table", **url_args),
+                }
 
     return render_template(
         "template.html",
@@ -1807,17 +1822,31 @@ def run(
         )
         LOGGER.addHandler(fh)
 
-    # sqlite3 is required for executescript used in load
-    setup_conn = sqlite3.connect(db, check_same_thread=False)
-    CONFIG = read_config_files(table_config, Lark(grammar, parser="lalr", transformer=TreeToDict()))
-    CONFIG["db"] = setup_conn
-    configure_db(CONFIG)
+    conn = psycopg2.connect(dbname="ontodev_demo", user="root")
+    cur = conn.cursor()
+    cur.execute('SELECT * from "assay"')
+    # print(f"................... {cur.fetchone()} ...................")
 
-    # SQLAlchemy connection required for sprocket/gizmos
-    abspath = os.path.abspath(db)
-    db_url = "sqlite:///" + abspath + "?check_same_thread=False"
+    db_url = "postgresql://root@/ontodev_demo"
     engine = create_engine(db_url)
     CONN = engine.connect()
+    res = CONN.execute('SELECT * from "assay"').fetchone()
+    # print(f"******************* {res} *******************")
+
+    # TODO: Reimplement the code below using postgresql. In principle the db type should be
+    # configurable.
+
+    # # sqlite3 is required for executescript used in load
+    # setup_conn = sqlite3.connect(db, check_same_thread=False)
+    CONFIG = read_config_files(table_config, Lark(grammar, parser="lalr", transformer=TreeToDict()))
+    # CONFIG["db"] = setup_conn
+    configure_db(CONFIG)
+
+    # # SQLAlchemy connection required for sprocket/gizmos
+    # abspath = os.path.abspath(db)
+    # db_url = "sqlite:///" + abspath + "?check_same_thread=False"
+    # engine = create_engine(db_url)
+    # CONN = engine.connect()
 
     if cgi_path:
         os.environ["SCRIPT_NAME"] = cgi_path

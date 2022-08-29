@@ -1,8 +1,8 @@
-Flask
+Flask==2.0.2
 hiccupy==1.0.0
-lark
-SQLAlchemy
-xlsx2csv
+lark==1.0.0
+SQLAlchemy==1.4.29
+xlsx2csv==0.8.0
 cmi-pb-terminology @ git+https://github.com/jamesaoverton/cmi-pb-terminology.git@next-2
-ontodev-gadget @ git+https://github.com/ontodev/gadget.git
-ontodev-sprocket @ git+https://github.com/ontodev/sprocket.git@standalone-table
+ontodev-gadget @ git+https://github.com/ontodev/gadget.git@dfec71a96c969072774cf45291093159804b8d32
+ontodev-sprocket @ git+https://github.com/ontodev/sprocket.git@321922fe8038c520c09fadc9d489b23518d902eb
