@@ -1762,6 +1762,7 @@ def render_tree(table_name: str, term_id: str = None) -> str:
 
 def run(
     db,
+    postgres_url,
     table_config,
     base_ontology=None,
     cgi_path=None,
@@ -1827,11 +1828,11 @@ def run(
     cur.execute('SELECT * from "assay"')
     # print(f"................... {cur.fetchone()} ...................")
 
-    db_url = "postgresql://root@/ontodev_demo"
-    engine = create_engine(db_url)
+    #db_url = "postgresql://root@/ontodev_demo"
+    engine = create_engine(postgres_url)
     CONN = engine.connect()
     res = CONN.execute('SELECT * from "assay"').fetchone()
-    # print(f"******************* {res} *******************")
+    #print(f"******************* {res} *******************")
 
     # TODO: Reimplement the code below using postgresql. In principle the db type should be
     # configurable.
