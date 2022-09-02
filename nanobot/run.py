@@ -789,7 +789,7 @@ def get_html_type_and_values(
     if res:
         if not values:
             condition = res["condition"]
-            if condition and condition.startswith("in"):
+            if condition and condition.startswith("in(") and condition.endswith(")"):
                 values = [c.strip("'\" ") for c in condition[3:-1].split(",")]
         html_type = res["HTML type"]
         if html_type:
