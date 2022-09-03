@@ -838,16 +838,7 @@ def get_primary_key(table_name: str) -> str:
     )
     res = CONN.execute(query, table=table_name).fetchone()
     if res:
-        # Postgresql seems to internally store column names as lower case. This only matters
-        # when you use double-quotes in your queries to protect column names. For example:
-        #   1) create table Bar (Foo text);
-        #   2) select Foo from Bar -> OK.
-        #   3) select "Foo" from "Bar" -> Not OK.
-        #   4) select "foo" from "bar" -> OK.
-        #   5) select foo from bar -> OK.
-        # Sqlite doesn't seem to care either way.
-        # Therefore it is safest in any case to use casefold() here.
-        return res["column"].casefold()
+        return res["column"]
     else:
         return "row_number"
 
