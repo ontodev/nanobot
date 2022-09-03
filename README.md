@@ -16,7 +16,7 @@ Finally, you will need to install `wiring.py` following the directions [here](ht
 
 ## Database
 
-TODO: `nanobot` requires a database created by `onotdev_valve.configure_and_or_load`
+TODO: `nanobot` requires a database created by VALVE's [configure_and_or_load](https://docs.rs/ontodev_valve/0.1.9/ontodev_valve/fn.configure_and_or_load.html) function. The python binding for this function is given by [ontodev_valve.py_configure_and_or_load](https://github.com/ontodev/valve.py/blob/eaca2ad08d8a5b8cca95750c2e1560221c946373/valve_py.rs#L19)
 
 ## Usage
 
