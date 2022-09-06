@@ -42,11 +42,11 @@ from urllib.parse import unquote
 from werkzeug.exceptions import HTTPException
 
 from ontodev_valve import (
-    py_get_matching_values,
-    py_validate_row,
-    py_configure_and_or_load,
-    py_insert_new_row,
-    py_update_row,
+    get_matching_values,
+    validate_row,
+    configure_and_or_load,
+    insert_new_row,
+    update_row,
 )
 
 
@@ -248,7 +248,7 @@ def table(table_name):
 
     # Typeahead for autocomplete in data forms
     if request.args.get("format") == "json":
-        return py_get_matching_values(
+        return get_matching_values(
             json.dumps(CONFIG),
             CONFIG["db"],
             table_name,
@@ -279,7 +279,7 @@ def table(table_name):
             form_html = get_row_as_form(table_name, validated_row)
         elif request.form["action"] == "submit":
             # Add row to the database and get the new row number
-            row_number = py_insert_new_row(CONFIG["db"], table_name, json.dumps(validated_row))
+            row_number = insert_new_row(CONFIG["db"], table_name, json.dumps(validated_row))
             # Use row number to get the primary key for this row & redirect to new term
             if pk == "row_number":
                 row_pk = row_number
@@ -1108,7 +1108,7 @@ def render_row_from_database(table_name: str, term_id: str, row_number: int) -> 
             validated_row = validate_table_row(table_name, new_row, row_number=row_number)
             # Update the row regardless of results
             # Row ID may be different than row number, if exists
-            py_update_row(CONFIG["db"], table_name, json.dumps(validated_row), row_number)
+            update_row(CONFIG["db"], table_name, json.dumps(validated_row), row_number)
             messages = get_messages(validated_row)
             if messages.get("error"):
                 warn = messages.get("warn", [])
@@ -1210,7 +1210,7 @@ def validate_table_row(table_name: str, data: dict, row_number: int = None) -> d
         }
 
     # Row number may be different than row ID, if this column is used
-    validated_row = py_validate_row(
+    validated_row = validate_row(
         json.dumps(CONFIG),
         CONFIG["db"],
         table_name,
@@ -1812,7 +1812,7 @@ def run(
         )
         LOGGER.addHandler(fh)
 
-    CONFIG = py_configure_and_or_load(table_config, db, False)
+    CONFIG = configure_and_or_load(table_config, db, False)
     CONFIG = json.loads(CONFIG)
     CONFIG["db"] = db
 
