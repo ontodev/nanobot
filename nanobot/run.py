@@ -411,7 +411,8 @@ def term(table_name, term_id):
         if term_loc:
             edit_btn = {
                 "text": "Edit term in " + term_loc,
-                "url": url_for("cmi-pb.term", table_name=term_loc, term_id=term_id, view="form"),
+                "url": url_for("cmi-pb.term", table_name=term_loc, term_id=term_id,
+                               view="form"),
             }
             if table_name == OPTIONS["base_ontology"] and term_loc != OPTIONS["import_table"]:
                 # Always include an add button which adds a new term in same template
@@ -505,8 +506,7 @@ def get_term_location(term_id: str) -> Union[str, None]:
     term_index = get_term_index()
     if term_index:
         res = CONN.execute(
-            sql_text(f'SELECT "table" FROM "{term_index}" WHERE ID == :term_id'),
-            term_id=term_id,
+            sql_text(f'SELECT "table" FROM "{term_index}" WHERE ID == :term_id'), term_id=term_id,
         ).fetchone()
         if res:
             return res["table"]
@@ -773,9 +773,7 @@ def get_hiccup_form_row(
     return ["div", {"class": "row py-1"}, header_col, value_col]
 
 
-def get_html_type_and_values(
-    datatype: str, values: list = None
-) -> Tuple[Optional[str], Optional[list]]:
+def get_html_type_and_values(datatype: str, values: list = None) -> Tuple[Optional[str], Optional[list]]:
     """Query the 'datatype' table for the HTML form field type and, maybe, a list of allowed values for the field.
 
     :param datatype: datatype to get HTML type and allowed values of
@@ -1234,7 +1232,9 @@ def dump_search_results(table_name: str) -> str:
     if not search_text:
         return json.dumps([])
     # return the raw search results to use in typeahead
-    return json.dumps(search(CONN, limit=30, search_text=search_text, statement=table_name))
+    return json.dumps(
+        search(CONN, limit=30, search_text=search_text, statement=table_name)
+    )
 
 
 def get_ontology_title(table_name: str, table_active: bool = True, term_id: str = None) -> str:
