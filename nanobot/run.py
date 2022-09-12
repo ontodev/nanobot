@@ -2,7 +2,7 @@ import gadget.sql as gs
 import json
 import logging
 import os
-import sqlite3
+import psycopg2
 import traceback
 
 from collections import defaultdict
@@ -23,7 +23,7 @@ from gadget.search import search
 from hiccupy import insert_href, render
 from html import escape as html_escape
 from itertools import chain
-from lark import Lark, UnexpectedCharacters
+from lark import UnexpectedCharacters
 from logging import Logger
 from sprocket import (
     get_sql_columns,
@@ -42,9 +42,13 @@ from typing import Dict, Optional, Tuple, Union
 from urllib.parse import unquote
 from werkzeug.exceptions import HTTPException
 
-from cmi_pb_script.cmi_pb_grammar import grammar, TreeToDict
-from cmi_pb_script.load import configure_db, insert_new_row, read_config_files, update_row
-from cmi_pb_script.validate import get_matching_values, validate_row
+from ontodev_valve import (
+    get_matching_values,
+    validate_row,
+    configure_and_or_load,
+    insert_new_row,
+    update_row,
+)
 
 
 BUILTIN_LABELS = {
@@ -77,8 +81,10 @@ BLUEPRINT = Blueprint(
     template_folder=os.path.abspath(os.path.join(os.path.dirname(__file__), "templates")),
 )
 CONFIG = None  # type: Optional[dict]
-CONN = None  # type: Optional[Connection]
+PG_CONN = None  # type: Optional[Connection]
+SQLITE_CONN = None  # type: Optional[Connection]
 LOGGER = None  # type: Optional[Logger]
+UPSTREAM_ONTOLOGIES = ["cob", "obi", "uberon", "ncbitaxon"]
 
 OPTIONS = {
     "base_ontology": None,
@@ -128,22 +134,32 @@ def index():
 
 @BLUEPRINT.route("/<table_name>/row/<row_number>", methods=["GET", "POST"])
 def row(table_name, row_number):
-    if is_ontology(table_name):
+    if table_name.casefold() in UPSTREAM_ONTOLOGIES and PG_CONN:
+        conn = PG_CONN
+    else:
+        conn = SQLITE_CONN
+
+    if is_ontology(conn, table_name):
         return abort(400, f"'row' path is not valid for ontology table '{table_name}'")
     try:
         row_number = int(row_number)
     except ValueError:
         return abort(400, f"Row number '{row_number}' must be an integer")
-    return render_row_from_database(table_name, None, row_number)
+    return render_row_from_database(conn, table_name, None, row_number)
 
 
 @BLUEPRINT.route("/<table_name>", methods=["GET", "POST"])
 def table(table_name):
+    if table_name.casefold() in UPSTREAM_ONTOLOGIES and PG_CONN:
+        conn = PG_CONN
+    else:
+        conn = SQLITE_CONN
+
     messages = defaultdict(list)
     view = request.args.get("view")
     if view == "tree":
         # Will throw an error if non-ontology table
-        return render_tree(table_name)
+        return render_tree(conn, table_name)
 
     # Check for subclass of searches - these are automatically term table views
     subclass_of = request.args.get("subClassOf")
@@ -165,7 +181,7 @@ def table(table_name):
     tables = get_display_tables()
 
     # First check if table is an ontology table - if so, render term IDs + labels
-    if is_ontology(table_name):
+    if is_ontology(conn, table_name):
         # Maybe get a set of predicates to restrict search results to
         select = request.args.get("select")
         predicates = ["rdfs:label", OPTIONS["synonym"]]
@@ -173,16 +189,16 @@ def table(table_name):
             # TODO: add form at top of page for user to select predicates to show?
             pred_labels = select.split(",")
             predicates = gs.get_ids(
-                CONN, id_or_labels=pred_labels, id_type="predicate", statement=table_name
+                conn, id_or_labels=pred_labels, id_type="predicate", statement=table_name
             )
 
         search_text = request.args.get("text")
         if search_text or request.args.get("format"):
             # Get matching terms
             if request.args.get("exact") and not request.args.get("format") == "json":
-                term_ids = gs.get_ids(CONN, id_or_labels=[search_text], statement=table_name)
+                term_ids = gs.get_ids(conn, id_or_labels=[search_text], statement=table_name)
             else:
-                data = search(CONN, limit=None, search_text=search_text or "", statement=table_name)
+                data = search(conn, limit=None, search_text=search_text or "", statement=table_name)
                 if request.args.get("format") == "json":
                     # Support for typeahead search
                     return json.dumps(data)
@@ -205,10 +221,10 @@ def table(table_name):
                     subtitle=f"No results for '{search_text}'",
                     table_name=table_name,
                     tables=tables,
-                    title=get_ontology_title(table_name),
+                    title=get_ontology_title(conn, table_name),
                 )
-            data = gs.get_objects(CONN, predicates, statement=table_name, term_ids=term_ids)
-            response = render_ontology_table(table_name, data, predicates=predicates)
+            data = gs.get_objects(conn, predicates, statement=table_name, term_ids=term_ids)
+            response = render_ontology_table(conn, table_name, data, predicates=predicates)
             if isinstance(response, Response):
                 return response
             return render_template(
@@ -222,12 +238,12 @@ def table(table_name):
                 subtitle=f"Showing search results for '{search_text}'",
                 table_name=table_name,
                 tables=tables,
-                title=get_ontology_title(table_name),
+                title=get_ontology_title(conn, table_name),
             )
 
         # Export the data - excluding anon objects
-        data = gs.get_objects(CONN, predicates, exclude_json=True, statement=table_name)
-        response = render_ontology_table(table_name, data, predicates=predicates)
+        data = gs.get_objects(conn, predicates, exclude_json=True, statement=table_name)
+        response = render_ontology_table(conn, table_name, data, predicates=predicates)
         if isinstance(response, Response):
             return response
         return render_template(
@@ -240,23 +256,22 @@ def table(table_name):
             show_search=True,
             table_name=table_name,
             tables=tables,
-            title=get_ontology_title(table_name),
+            title=get_ontology_title(conn, table_name),
         )
 
     # Typeahead for autocomplete in data forms
     if request.args.get("format") == "json":
-        return json.dumps(
-            get_matching_values(
-                CONFIG,
-                table_name,
-                request.args.get("column"),
-                matching_string=request.args.get("text"),
-            )
+        return get_matching_values(
+            json.dumps(CONFIG),
+            CONFIG["db"],
+            table_name,
+            request.args.get("column"),
+            matching_string=request.args.get("text"),
         )
 
     form_html = None
     pk = get_primary_key(table_name)
-    cols = get_sql_columns(CONN, table_name)
+    cols = get_sql_columns(conn, table_name)
     if request.method == "POST":
         # Override view, which isn't passed in POST
         view = "form"
@@ -277,12 +292,12 @@ def table(table_name):
             form_html = get_row_as_form(table_name, validated_row)
         elif request.form["action"] == "submit":
             # Add row to the database and get the new row number
-            row_number = insert_new_row(CONFIG, table_name, validated_row)
+            row_number = insert_new_row(CONFIG["db"], table_name, json.dumps(validated_row))
             # Use row number to get the primary key for this row & redirect to new term
             if pk == "row_number":
                 row_pk = row_number
             else:
-                res = CONN.execute(
+                res = conn.execute(
                     sql_text(
                         f"""SELECT DISTINCT "{pk}" from "{table_name}_view"
                         WHERE row_number = :row_number"""
@@ -318,7 +333,7 @@ def table(table_name):
     # Otherwise render default sprocket table
     try:
         response = render_database_table(
-            CONN,
+            conn,
             table_name,
             request.args,
             base_url=url_for("cmi-pb.table", table_name=table_name),
@@ -357,14 +372,19 @@ def table(table_name):
 
 @BLUEPRINT.route("/<table_name>/<term_id>", methods=["GET", "POST"])
 def term(table_name, term_id):
-    if not is_ontology(table_name):
+    if table_name.casefold() in UPSTREAM_ONTOLOGIES and PG_CONN:
+        conn = PG_CONN
+    else:
+        conn = SQLITE_CONN
+
+    if not is_ontology(conn, table_name):
         # Get row number based on PK
         row_number = get_row_number(table_name, term_id)
         if not row_number:
             return abort(
                 500, f"'{term_id}' is not a valid primary key value for table '{table_name}'"
             )
-        return render_row_from_database(table_name, term_id, row_number)
+        return render_row_from_database(conn, table_name, term_id, row_number)
 
     # Redirect to main ontology table search, do not limit search results
     search_text = request.args.get("text")
@@ -378,7 +398,7 @@ def term(table_name, term_id):
         # return render_term_form(table_name, term_id)
         return abort(501, "Editing ontology terms is not yet implemented")
     elif view == "tree":
-        return render_tree(table_name, term_id=term_id)
+        return render_tree(conn, table_name, term_id=term_id)
     elif request.args.get("format") == "json":
         return dump_search_results(table_name)
     else:
@@ -387,18 +407,18 @@ def term(table_name, term_id):
             # TODO: add form at top of page for user to select predicates to show?
             pred_labels = select.split(",")
             predicates = gs.get_ids(
-                CONN, id_or_labels=pred_labels, id_type="predicate", statement=table_name
+                conn, id_or_labels=pred_labels, id_type="predicate", statement=table_name
             )
         else:
-            predicates = gs.get_ids(CONN, id_type="predicate", statement=table_name)
+            predicates = gs.get_ids(conn, id_type="predicate", statement=table_name)
 
         data = gs.get_objects(
-            CONN, predicates, include_all_predicates=False, statement=table_name, term_ids=[term_id]
+            conn, predicates, include_all_predicates=False, statement=table_name, term_ids=[term_id]
         )
         lbls = data[term_id].get("rdfs:label")
         subtitle = lbls[0]["object"] if lbls else term_id
 
-        response = render_ontology_table(table_name, data, predicates=predicates)
+        response = render_ontology_table(conn, table_name, data, predicates=predicates)
         if isinstance(response, Response):
             return response
 
@@ -420,7 +440,7 @@ def term(table_name, term_id):
                 }
         elif table_name != OPTIONS["base_ontology"] and OPTIONS["import_table"]:
             # Only include add button if its not already in import
-            term_label = gs.get_labels(CONN, [term_id], statement=table_name)[term_id]
+            term_label = gs.get_labels(conn, [term_id], statement=table_name)[term_id]
             url_args = {
                 "table_name": OPTIONS["import_table"],
                 "view": "form",
@@ -446,7 +466,7 @@ def term(table_name, term_id):
             subtitle=subtitle,
             table_name=table_name,
             tables=get_display_tables(),
-            title=get_ontology_title(table_name, term_id=term_id),
+            title=get_ontology_title(conn, table_name, term_id=term_id),
         )
 
 
@@ -468,7 +488,7 @@ def get_display_ontologies() -> list:
 
     :return: list of ontology tables
     """
-    return [t for t in get_sql_tables(CONN) if is_ontology(t)]
+    return [t for t in get_sql_tables(SQLITE_CONN) if is_ontology(SQLITE_CONN, t)] + UPSTREAM_ONTOLOGIES
 
 
 def get_display_tables() -> list:
@@ -478,10 +498,10 @@ def get_display_tables() -> list:
     """
     term_index = get_term_index()
     if term_index and OPTIONS["hide_index"]:
-        tables = [x for x in get_sql_tables(CONN) if x != term_index]
+        tables = [x for x in get_sql_tables(SQLITE_CONN) if x != term_index]
     else:
-        tables = get_sql_tables(CONN)
-    return [t for t in tables if not is_ontology(t)]
+        tables = get_sql_tables(SQLITE_CONN)
+    return [t for t in tables if not is_ontology(SQLITE_CONN, t)]
 
 
 def get_term_index() -> Union[str, None]:
@@ -489,7 +509,7 @@ def get_term_index() -> Union[str, None]:
 
     :return: table name of index table, or None
     """
-    res = CONN.execute('SELECT "table" FROM "table" WHERE "type" = "index"').fetchone()
+    res = SQLITE_CONN.execute('SELECT "table" FROM "table" WHERE "type" = \'index\'').fetchone()
     if res:
         return res["table"]
     return None
@@ -503,7 +523,7 @@ def get_term_location(term_id: str) -> Union[str, None]:
     """
     term_index = get_term_index()
     if term_index:
-        res = CONN.execute(
+        res = SQLITE_CONN.execute(
             sql_text(f'SELECT "table" FROM "{term_index}" WHERE ID == :term_id'), term_id=term_id,
         ).fetchone()
         if res:
@@ -535,7 +555,7 @@ def get_all_datatypes(datatype: str) -> list:
             WHERE ancestors.parent = datatype)
         SELECT DISTINCT parent FROM ancestors"""
     )
-    results = CONN.execute(query, dt=datatype)
+    results = SQLITE_CONN.execute(query, dt=datatype)
     all_types = [datatype]
     for res in results:
         all_types.append(res["parent"])
@@ -778,18 +798,15 @@ def get_html_type_and_values(datatype: str, values: list = None) -> Tuple[Option
     :param values: allowed values from column (overrides datatype values)
     :return: tuple of HTML type and allowed values for given datatype
     """
-    res = CONN.execute(
+    res = SQLITE_CONN.execute(
         'SELECT parent, "HTML type", condition FROM datatype WHERE datatype = :datatype',
         datatype=datatype,
     ).fetchone()
     if res:
         if not values:
             condition = res["condition"]
-            if condition and condition.startswith("in"):
-                parsed = CONFIG["parser"].parse(condition)[0]
-                # TODO: the in conditions are parsed with surrounding quotes
-                #       looks like there are always quotes? Maybe not with numbers?
-                values = [x["value"][1:-1] for x in parsed["args"]]
+            if condition and condition.startswith("in(") and condition.endswith(")"):
+                values = [c.strip("'\" ") for c in condition[3:-1].split(",")]
         html_type = res["HTML type"]
         if html_type:
             return html_type, values
@@ -833,9 +850,9 @@ def get_primary_key(table_name: str) -> str:
     :return: primary key or 'row_number'
     """
     query = sql_text(
-        'SELECT "column" FROM "column" WHERE "table" = :table AND "structure" LIKE "%%primary%%"'
+        'SELECT "column" FROM "column" WHERE "table" = :table AND "structure" LIKE \'%%primary%%\''
     )
-    res = CONN.execute(query, table=table_name).fetchone()
+    res = SQLITE_CONN.execute(query, table=table_name).fetchone()
     if res:
         return res["column"]
     else:
@@ -885,10 +902,10 @@ def get_row_as_form(table_name: str, data: dict) -> str:
         # Default HTML type is a simple text input
         html_type = "text"
         allowed_values = None
-        tables = get_sql_tables(CONN)
+        tables = get_sql_tables(SQLITE_CONN)
         if "column" in tables:
             # Use column table to get description & datatype for this col
-            res = CONN.execute(
+            res = SQLITE_CONN.execute(
                 sql_text(
                     """SELECT description, datatype, structure FROM "column"
                     WHERE "table" = :table AND "column" = :column"""
@@ -985,7 +1002,7 @@ def get_row_number(table_name: str, pk_value: str) -> Optional[int]:
     :return: row number for row with given primary key, or None if primary key is not found
     """
     pk_col = get_primary_key(table_name)
-    res = CONN.execute(
+    res = SQLITE_CONN.execute(
         sql_text(f'SELECT row_number FROM "{table_name}" WHERE "{pk_col}" = :pk'), pk=pk_value
     ).fetchone()
     if not res:
@@ -1001,11 +1018,14 @@ def get_transformations(table_name: str) -> dict:
     :return: dict of column name -> transformation
     """
     transform = {}
-    cols = get_sql_columns(CONN, table_name)
+    cols = get_sql_columns(SQLITE_CONN, table_name)
+    if not(cols):
+        return abort(400, f"No columns found for table '{table_name}'. Does '{table_name}' exist?")
+
     query = sql_text(
         f'SELECT "column", "datatype" FROM "column" WHERE "table" = :t AND "column" IN :cols'
     ).bindparams(bindparam("cols", expanding=True))
-    results = CONN.execute(query, t=table_name, cols=cols).fetchall()
+    results = SQLITE_CONN.execute(query, t=table_name, cols=cols).fetchall()
     for res in results:
         dt = res["datatype"]
         col = res["column"]
@@ -1068,7 +1088,7 @@ def get_transformations(table_name: str) -> dict:
     return transform
 
 
-def render_row_from_database(table_name: str, term_id: str, row_number: int) -> Optional[Response]:
+def render_row_from_database(conn, table_name: str, term_id: str, row_number: int) -> Optional[Response]:
     """Render the data from a row in a database using query parameters. If a format is not specified, an HTML string is
     returned. Otherwise, the data in given format is returned as a Response object for the client to download.
 
@@ -1084,7 +1104,7 @@ def render_row_from_database(table_name: str, term_id: str, row_number: int) -> 
         # Use the cols from the table, in case a value wasn't given to something
         # - we always ignore meta columns & row_number (for new row)
         new_row = {}
-        for c in get_sql_columns(CONN, table_name):
+        for c in get_sql_columns(conn, table_name):
             if c.endswith("_meta") or c == "row_number":
                 continue
             v = request.form.get(c)
@@ -1107,7 +1127,7 @@ def render_row_from_database(table_name: str, term_id: str, row_number: int) -> 
             validated_row = validate_table_row(table_name, new_row, row_number=row_number)
             # Update the row regardless of results
             # Row ID may be different than row number, if exists
-            update_row(CONFIG, table_name, validated_row, row_number)
+            update_row(CONFIG["db"], table_name, json.dumps(validated_row), row_number)
             messages = get_messages(validated_row)
             if messages.get("error"):
                 warn = messages.get("warn", [])
@@ -1120,7 +1140,7 @@ def render_row_from_database(table_name: str, term_id: str, row_number: int) -> 
         if not form_html:
             # Get the row
             res = dict(
-                CONN.execute(
+                conn.execute(
                     f"SELECT * FROM {table_name}_view WHERE row_number = {row_number}"
                 ).fetchone()
             )
@@ -1155,7 +1175,7 @@ def render_row_from_database(table_name: str, term_id: str, row_number: int) -> 
 
     try:
         response = render_database_table(
-            CONN,
+            conn,
             table_name,
             request_args,
             base_url=url_for("cmi-pb.table", table_name=table_name),
@@ -1200,18 +1220,24 @@ def validate_table_row(table_name: str, data: dict, row_number: int = None) -> d
     :return: validated row
     """
     # Transform row into dict expected for validate
-    if row_number:
-        result_row = {}
-        for column, value in data.items():
-            result_row[column] = {
-                "value": value,
-                "valid": True,
-                "messages": [],
-            }
-        # Row number may be different than row ID, if this column is used
-        return validate_row(CONFIG, table_name, result_row, row_number=row_number)
-    else:
-        return validate_row(CONFIG, table_name, data, existing_row=False)
+    result_row = {}
+    for column, value in data.items():
+        result_row[column] = {
+            "value": value,
+            "valid": True,
+            "messages": [],
+        }
+
+    # Row number may be different than row ID, if this column is used
+    validated_row = validate_row(
+        json.dumps(CONFIG),
+        CONFIG["db"],
+        table_name,
+        json.dumps(result_row),
+        True if row_number else False,
+        row_number if row_number else None,
+    )
+    return json.loads(validated_row)
 
 
 # ----- ONTOLOGY TABLE METHODS -----
@@ -1228,11 +1254,11 @@ def dump_search_results(table_name: str) -> str:
         return json.dumps([])
     # return the raw search results to use in typeahead
     return json.dumps(
-        search(CONN, limit=30, search_text=search_text, statement=table_name)
+        search(SQLITE_CONN, limit=30, search_text=search_text, statement=table_name)
     )
 
 
-def get_ontology_title(table_name: str, table_active: bool = True, term_id: str = None) -> str:
+def get_ontology_title(conn, table_name: str, table_active: bool = True, term_id: str = None) -> str:
     """Given an ontology statement table, get the ontology title element which includes the ontology title and a link to
     tree and table views.
 
@@ -1243,10 +1269,10 @@ def get_ontology_title(table_name: str, table_active: bool = True, term_id: str 
     """
     # Try to get an ontology title using the dce:title property
     ontology_title = None
-    ontology_iri = gs.get_ontology_iri(CONN, statement=table_name)
+    ontology_iri = gs.get_ontology_iri(conn, statement=table_name)
     if ontology_iri:
-        prefixes = gs.get_prefixes(CONN)
-        ontology_title = gs.get_ontology_title(CONN, prefixes, ontology_iri, statement=table_name)
+        prefixes = gs.get_prefixes(conn)
+        ontology_title = gs.get_ontology_title(conn, prefixes, ontology_iri, statement=table_name)
 
     # Create the links
     if term_id:
@@ -1294,7 +1320,7 @@ def get_terms_from_arg(table_name: str, arg: str) -> dict:
     except UnexpectedCharacters:
         parent_terms = [arg]
     # We don't know if we were passed ID or label, so get both for all terms
-    return gs.get_labels(CONN, parent_terms, statement=table_name)
+    return gs.get_labels(SQLITE_CONN, parent_terms, statement=table_name)
 
 
 def get_terms_of_type(table_name: str, entity_type: str) -> list:
@@ -1304,7 +1330,7 @@ def get_terms_of_type(table_name: str, entity_type: str) -> list:
     :param entity_type: entity to get all instances of
     :return: list of ontology terms of given type
     """
-    results = CONN.execute(
+    results = SQLITE_CONN.execute(
         sql_text(
             f"SELECT subject FROM \"{table_name}\" WHERE predicate = 'rdf:type' AND object = :type"
         ),
@@ -1313,16 +1339,16 @@ def get_terms_of_type(table_name: str, entity_type: str) -> list:
     return [res["subject"] for res in results]
 
 
-def is_ontology(table_name: str) -> bool:
+def is_ontology(conn, table_name: str) -> bool:
     """Check if a given table is an LDTab ontology statement table.
 
     :param table_name: table to check
     :return: True if table is an LDTab ontology statement table"""
-    columns = get_sql_columns(CONN, table_name)
+    columns = get_sql_columns(conn, table_name)
     return {"subject", "predicate", "object", "datatype", "annotation"}.issubset(set(columns))
 
 
-def render_ontology_table(table_name, data, predicates: list = None) -> Optional[Response]:
+def render_ontology_table(conn, table_name, data, predicates: list = None) -> Optional[Response]:
     """Render an ontology statement table as a Response for downloads or an HTML table (string).
 
     :param table_name: name of SQL table that contains terms
@@ -1334,7 +1360,7 @@ def render_ontology_table(table_name, data, predicates: list = None) -> Optional
     # Reverse the ID -> label dictionary to translate column names to IDs
     if not predicates:
         predicates = set(chain.from_iterable([list(x.keys()) for x in data.values()]))
-    predicate_labels = gs.get_labels(CONN, list(predicates), statement=table_name)
+    predicate_labels = gs.get_labels(conn, list(predicates), statement=table_name)
 
     # TODO: how do we want to handle these? Sometimes they are URNs, e.g. swrl
     # Exclude full IRIs
@@ -1386,7 +1412,7 @@ def render_ontology_table(table_name, data, predicates: list = None) -> Optional
     if not fmt:
         # Convert objects to hiccup with ofn
         rendered = terms2dicts(
-            CONN,
+            conn,
             data_subset,
             include_annotations=True,
             include_id=True,
@@ -1415,7 +1441,7 @@ def render_ontology_table(table_name, data, predicates: list = None) -> Optional
 
         if not predicates:
             predicates = set(chain.from_iterable([list(x.keys()) for x in rendered]))
-        predicate_labels = gs.get_labels(CONN, list(predicates), statement=table_name)
+        predicate_labels = gs.get_labels(conn, list(predicates), statement=table_name)
 
         # Create the HTML output of data
         table_data = []
@@ -1464,7 +1490,7 @@ def render_ontology_table(table_name, data, predicates: list = None) -> Optional
         if fmt.lower() == "csv":
             delimiter = ","
             mt = "text/comma-separated-values"
-        data = terms2dicts(CONN, data_subset, sep=field_sep, statement=table_name)
+        data = terms2dicts(conn, data_subset, sep=field_sep, statement=table_name)
         return Response(dicts2tsv(data, data[0].keys(), delimiter=delimiter), mimetype=mt)
     else:
         return abort(400, "Unknown export format: " + fmt)
@@ -1483,25 +1509,25 @@ def render_subclass_of(table_name: str, param: str, arg: str) -> Optional[Respon
     terms = set()
     if param == "subClassOf":
         for p in id_to_label.keys():
-            terms.update(gs.get_children(CONN, p, statement=table_name))
+            terms.update(gs.get_children(SQLITE_CONN, p, statement=table_name))
     elif param == "subClassOf?":
         terms.update(id_to_label.keys())
         for p in id_to_label.keys():
-            terms.update(gs.get_children(CONN, p, statement=table_name))
+            terms.update(gs.get_children(SQLITE_CONN, p, statement=table_name))
     elif param == "subClassOfplus":
         for p in id_to_label.keys():
-            terms.update(gs.get_descendants(CONN, p, statement=table_name))
+            terms.update(gs.get_descendants(SQLITE_CONN, p, statement=table_name))
     elif param == "subClassOf*":
         terms.update(id_to_label.keys())
         for p in id_to_label.keys():
-            terms.update(gs.get_descendants(CONN, p, statement=table_name))
+            terms.update(gs.get_descendants(SQLITE_CONN, p, statement=table_name))
     else:
         abort(400, "Unknown 'subClassOf' query parameter: " + param)
 
     if request.args.get("format") == "json":
         # Support for searching the subset of these terms
         data = search(
-            CONN,
+            SQLITE_CONN,
             limit=30,
             search_text=request.args.get("text", ""),
             statement=table_name,
@@ -1515,11 +1541,11 @@ def render_subclass_of(table_name: str, param: str, arg: str) -> Optional[Respon
         # TODO: add form at top of page for user to select predicates to show?
         pred_labels = select.split(",")
         predicates = gs.get_ids(
-            CONN, id_or_labels=pred_labels, id_type="predicate", statement=table_name
+            SQLITE_CONN, id_or_labels=pred_labels, id_type="predicate", statement=table_name
         )
 
     data = gs.get_objects(
-        CONN, predicates, exclude_json=True, statement=table_name, term_ids=list(terms)
+        SQLITE_CONN, predicates, exclude_json=True, statement=table_name, term_ids=list(terms)
     )
     response = render_ontology_table(table_name, data, predicates=predicates)
     if isinstance(response, Response):
@@ -1540,7 +1566,7 @@ def render_subclass_of(table_name: str, param: str, arg: str) -> Optional[Respon
         show_search=True,
         table_name=table_name,
         tables=get_display_tables(),
-        title=get_ontology_title(table_name),
+        title=get_ontology_title(conn, table_name),
         subtitle="Showing children of " + ", ".join(hrefs),
     )
 
@@ -1554,17 +1580,17 @@ def render_term_form(table_name: str, term_id: str) -> str:
     :return: HTML page with form
     """
     global FORM_ROW_ID
-    entity_type = gs.get_top_entity_type(CONN, term_id, statement=table_name)
+    entity_type = gs.get_top_entity_type(SQLITE_CONN, term_id, statement=table_name)
 
     # Get all annotation properties
     query = sql_text(
         f'SELECT DISTINCT predicate FROM "{table_name}" WHERE predicate NOT IN :logic',
     ).bindparams(bindparam("logic", expanding=True))
-    results = CONN.execute(query, {"logic": LOGIC_PREDICATES}).fetchall()
-    aps = gs.get_labels(CONN, [x["predicate"] for x in results], statement=table_name)
+    results = SQLITE_CONN.execute(query, {"logic": LOGIC_PREDICATES}).fetchall()
+    aps = gs.get_labels(SQLITE_CONN, [x["predicate"] for x in results], statement=table_name)
 
-    predicates = gs.get_ids(CONN, id_type="predicate", statement=table_name)
-    term_details = gs.get_objects(CONN, predicates, statement=table_name, term_ids=[term_id])
+    predicates = gs.get_ids(SQLITE_CONN, id_type="predicate", statement=table_name)
+    term_details = gs.get_objects(SQLITE_CONN, predicates, statement=table_name, term_ids=[term_id])
     if not term_details:
         return abort(400, f"Unable to find term {term_id} in '{table_name}' table")
     term_details = term_details[term_id]
@@ -1674,7 +1700,7 @@ def render_term_form(table_name: str, term_id: str) -> str:
     )
 
 
-def render_tree(table_name: str, term_id: str = None) -> str:
+def render_tree(conn, table_name: str, term_id: str = None) -> str:
     """Generate the page for the tree view for an ontology statement table. If a term_id is not supplied, the default
     'Class' page will show with a help message.
 
@@ -1682,13 +1708,13 @@ def render_tree(table_name: str, term_id: str = None) -> str:
     :param term_id: optional term_id to render tree view for
     :return: HTML page with tree view
     """
-    if not is_ontology(table_name):
+    if not is_ontology(conn, table_name):
         return abort(418, "Cannot show tree view for non-ontology table")
 
     # nothing to search, just return the tree view
     href = unquote(url_for("cmi-pb.term", table_name=table_name, view="tree", term_id="{curie}"))
     html = gadget_tree(
-        CONN,
+        conn,
         href=href,
         include_search=False,
         predicate_ids=OPTIONS["tree_predicates"],
@@ -1716,18 +1742,20 @@ def render_tree(table_name: str, term_id: str = None) -> str:
                 }
         elif table_name != OPTIONS["base_ontology"] and OPTIONS["import_table"]:
             # Only include add button if its not already in import
-            term_label = gs.get_labels(CONN, [term_id], statement=table_name)[term_id]
-            url_args = {
-                "table_name": OPTIONS["import_table"],
-                "view": "form",
-                "Source": table_name,
-                "ID": term_id,
-                "Label": term_label,
-            }
-            add_btn = {
-                "text": "Add to " + OPTIONS["base_ontology"],
-                "url": url_for("cmi-pb.table", **url_args),
-            }
+            term_labels = gs.get_labels(conn, [term_id], statement=table_name)
+            if term_labels:
+                term_label = term_labels[term_id]
+                url_args = {
+                    "table_name": OPTIONS["import_table"],
+                    "view": "form",
+                    "Source": table_name,
+                    "ID": term_id,
+                    "Label": term_label,
+                }
+                add_btn = {
+                    "text": "Add to " + OPTIONS["base_ontology"],
+                    "url": url_for("cmi-pb.table", **url_args),
+                }
 
     return render_template(
         "template.html",
@@ -1741,13 +1769,14 @@ def render_tree(table_name: str, term_id: str = None) -> str:
         show_search=True,
         table_name=table_name,
         tables=get_display_tables(),
-        title=get_ontology_title(table_name, table_active=False, term_id=term_id),
+        title=get_ontology_title(conn, table_name, table_active=False, term_id=term_id),
     )
 
 
 def run(
     db,
     table_config,
+    postgres_url=None,
     base_ontology=None,
     cgi_path=None,
     default_params=None,
@@ -1784,7 +1813,7 @@ def run(
                             predicates can be displayed in alphabetical order after the sorted
                             predicates using '*'
     """
-    global CONFIG, CONN, LOGGER, OPTIONS
+    global CONFIG, PG_CONN, SQLITE_CONN, LOGGER, OPTIONS
 
     # Override default options
     for k in OPTIONS.keys():
@@ -1807,17 +1836,24 @@ def run(
         )
         LOGGER.addHandler(fh)
 
-    # sqlite3 is required for executescript used in load
-    setup_conn = sqlite3.connect(db, check_same_thread=False)
-    CONFIG = read_config_files(table_config, Lark(grammar, parser="lalr", transformer=TreeToDict()))
-    CONFIG["db"] = setup_conn
-    configure_db(CONFIG)
+    CONFIG = configure_and_or_load(table_config, db, False)
+    CONFIG = json.loads(CONFIG)
+    CONFIG["db"] = db
 
     # SQLAlchemy connection required for sprocket/gizmos
     abspath = os.path.abspath(db)
-    db_url = "sqlite:///" + abspath + "?check_same_thread=False"
-    engine = create_engine(db_url)
-    CONN = engine.connect()
+    sqlite_url = "sqlite:///" + abspath + "?check_same_thread=False"
+    #print(f"******************* {sqlite_url} *****************")
+    sqlite_engine = create_engine(sqlite_url)
+    SQLITE_CONN = sqlite_engine.connect()
+    #res = SQLITE_CONN.execute('SELECT * from "assay"').fetchone()
+    #print(f"******************* {res} *******************")
+
+    if postgres_url:
+        pg_engine = create_engine(postgres_url)
+        PG_CONN = pg_engine.connect()
+        #res = PG_CONN.execute('SELECT * from "assay"').fetchone()
+        #print(f"******************* {res} *******************")
 
     if cgi_path:
         os.environ["SCRIPT_NAME"] = cgi_path
