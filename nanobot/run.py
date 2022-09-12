@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import psycopg2
-import sqlite3
 import traceback
 
 from collections import defaultdict
@@ -24,7 +23,7 @@ from gadget.search import search
 from hiccupy import insert_href, render
 from html import escape as html_escape
 from itertools import chain
-from lark import Lark, UnexpectedCharacters
+from lark import UnexpectedCharacters
 from logging import Logger
 from sprocket import (
     get_sql_columns,
@@ -43,9 +42,13 @@ from typing import Dict, Optional, Tuple, Union
 from urllib.parse import unquote
 from werkzeug.exceptions import HTTPException
 
-from cmi_pb_script.cmi_pb_grammar import grammar, TreeToDict
-from cmi_pb_script.load import configure_db, insert_new_row, read_config_files, update_row
-from cmi_pb_script.validate import get_matching_values, validate_row
+from ontodev_valve import (
+    get_matching_values,
+    validate_row,
+    configure_and_or_load,
+    insert_new_row,
+    update_row,
+)
 
 
 BUILTIN_LABELS = {
@@ -258,13 +261,12 @@ def table(table_name):
 
     # Typeahead for autocomplete in data forms
     if request.args.get("format") == "json":
-        return json.dumps(
-            get_matching_values(
-                CONFIG,
-                table_name,
-                request.args.get("column"),
-                matching_string=request.args.get("text"),
-            )
+        return get_matching_values(
+            json.dumps(CONFIG),
+            CONFIG["db"],
+            table_name,
+            request.args.get("column"),
+            matching_string=request.args.get("text"),
         )
 
     form_html = None
@@ -290,7 +292,7 @@ def table(table_name):
             form_html = get_row_as_form(table_name, validated_row)
         elif request.form["action"] == "submit":
             # Add row to the database and get the new row number
-            row_number = insert_new_row(CONFIG, table_name, validated_row)
+            row_number = insert_new_row(CONFIG["db"], table_name, json.dumps(validated_row))
             # Use row number to get the primary key for this row & redirect to new term
             if pk == "row_number":
                 row_pk = row_number
@@ -803,11 +805,8 @@ def get_html_type_and_values(datatype: str, values: list = None) -> Tuple[Option
     if res:
         if not values:
             condition = res["condition"]
-            if condition and condition.startswith("in"):
-                parsed = CONFIG["parser"].parse(condition)[0]
-                # TODO: the in conditions are parsed with surrounding quotes
-                #       looks like there are always quotes? Maybe not with numbers?
-                values = [x["value"][1:-1] for x in parsed["args"]]
+            if condition and condition.startswith("in(") and condition.endswith(")"):
+                values = [c.strip("'\" ") for c in condition[3:-1].split(",")]
         html_type = res["HTML type"]
         if html_type:
             return html_type, values
@@ -1128,7 +1127,7 @@ def render_row_from_database(conn, table_name: str, term_id: str, row_number: in
             validated_row = validate_table_row(table_name, new_row, row_number=row_number)
             # Update the row regardless of results
             # Row ID may be different than row number, if exists
-            update_row(CONFIG, table_name, validated_row, row_number)
+            update_row(CONFIG["db"], table_name, json.dumps(validated_row), row_number)
             messages = get_messages(validated_row)
             if messages.get("error"):
                 warn = messages.get("warn", [])
@@ -1221,18 +1220,24 @@ def validate_table_row(table_name: str, data: dict, row_number: int = None) -> d
     :return: validated row
     """
     # Transform row into dict expected for validate
-    if row_number:
-        result_row = {}
-        for column, value in data.items():
-            result_row[column] = {
-                "value": value,
-                "valid": True,
-                "messages": [],
-            }
-        # Row number may be different than row ID, if this column is used
-        return validate_row(CONFIG, table_name, result_row, row_number=row_number)
-    else:
-        return validate_row(CONFIG, table_name, data, existing_row=False)
+    result_row = {}
+    for column, value in data.items():
+        result_row[column] = {
+            "value": value,
+            "valid": True,
+            "messages": [],
+        }
+
+    # Row number may be different than row ID, if this column is used
+    validated_row = validate_row(
+        json.dumps(CONFIG),
+        CONFIG["db"],
+        table_name,
+        json.dumps(result_row),
+        True if row_number else False,
+        row_number if row_number else None,
+    )
+    return json.loads(validated_row)
 
 
 # ----- ONTOLOGY TABLE METHODS -----
@@ -1831,11 +1836,9 @@ def run(
         )
         LOGGER.addHandler(fh)
 
-    # sqlite3 is required for executescript used in load
-    sqlite_conn = sqlite3.connect(db, check_same_thread=False)
-    CONFIG = read_config_files(table_config, Lark(grammar, parser="lalr", transformer=TreeToDict()))
-    CONFIG["db"] = sqlite_conn
-    configure_db(CONFIG)
+    CONFIG = configure_and_or_load(table_config, db, False)
+    CONFIG = json.loads(CONFIG)
+    CONFIG["db"] = db
 
     # SQLAlchemy connection required for sprocket/gizmos
     abspath = os.path.abspath(db)

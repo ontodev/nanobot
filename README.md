@@ -2,18 +2,21 @@
 
 ## Setup
 
-`nanobot` requires Python version >=3.9. Ensure you have this installed, then set up a virtual environment and install `nanobot` and its dependencies:
-```
-$ python3 -m venv .venv
+`nanobot` requires Python version >=3.9. Ensure you have this installed, then set up a virtual environment and install `nanobot` and its dependencies.
+```sh
+$ python3.9 -m venv .venv
 $ source .venv/bin/activate
-$ python3 -m pip install -e .
+# Within a virtual environment, `python` resolves to the version used to create it.
+(.venv) $ python -m pip install -e .
+# VALVE is currently only available vie TestPyPI
+(.venv) $ pip install -i https://test.pypi.org/simple/ ontodev-valve
 ```
 
 Finally, you will need to install `wiring.py` following the directions [here](https://github.com/ontodev/wiring.py)
 
 ## Database
 
-TODO: `nanobot` requires a database created by `cmi_pb_script.load`
+`nanobot` requires a database created by VALVE's [configure_and_or_load](https://docs.rs/ontodev_valve/0.1.9/ontodev_valve/fn.configure_and_or_load.html) function. The python binding for this function is given by [ontodev_valve.py_configure_and_or_load](https://github.com/ontodev/valve.py/blob/eaca2ad08d8a5b8cca95750c2e1560221c946373/valve_py.rs#L19)
 
 ## Usage
 
